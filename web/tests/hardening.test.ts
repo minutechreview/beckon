@@ -2,7 +2,7 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 import { buildCsp, proxy } from "@/proxy";
-import { clientIp, hit, ipKey, resetRateLimits } from "@/lib/ratelimit";
+import { checkoutLimit, clientIp, hit, ipKey, resetRateLimits } from "@/lib/ratelimit";
 import { assertSafeConfig } from "@/lib/config";
 import { db, pool, schema } from "@/db";
 import { lookupDeviceCode } from "@/lib/device-lookup";
@@ -163,6 +163,17 @@ describe("rate limits", () => {
     expect(ipKey("198.51.100.4")).toBe("198.51.100.4");
     expect(ipKey("local")).toBe("local");
     expect(ipKey("not-an-address")).toBe("not-an-address");
+  });
+
+  it("limits Stripe Checkout sessions per network, not only per account", async () => {
+    const from = (ip: string) => new Request("http://localhost/api/billing/checkout", { method: "POST", headers: { "fly-client-ip": ip } });
+    // 20 throwaway accounts on one network open a session each: the 21st is refused, another network is not.
+    for (let i = 0; i < 20; i++) expect(await checkoutLimit(from("203.0.113.5"), `user-${i}`)).toBeNull();
+    expect((await checkoutLimit(from("203.0.113.5"), "user-20"))?.status).toBe(429);
+    expect(await checkoutLimit(from("198.51.100.9"), "user-20")).toBeNull();
+    // One account is still held to 10 a minute.
+    for (let i = 0; i < 10; i++) expect(await checkoutLimit(from(`192.0.2.${i}`), "busy")).toBeNull();
+    expect((await checkoutLimit(from("192.0.2.200"), "busy"))?.status).toBe(429);
   });
 });
 

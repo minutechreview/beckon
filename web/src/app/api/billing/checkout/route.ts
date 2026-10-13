@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { json, requireUser } from "@/lib/api";
 import { BillingError, createCheckout } from "@/lib/billing";
-import { rateLimit } from "@/lib/ratelimit";
+import { checkoutLimit } from "@/lib/ratelimit";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +10,7 @@ const body = z.object({ interval: z.enum(["month", "year"]) });
 export async function POST(req: Request) {
   const u = await requireUser();
   if ("error" in u) return u.error;
-  const limited = await rateLimit("billing", u.userId, 10, 60_000);
+  const limited = await checkoutLimit(req, u.userId);
   if (limited) return limited;
   const parsed = body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return json({ error: "invalid_request" }, 400);

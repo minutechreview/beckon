@@ -6,7 +6,7 @@ import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { eq } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import { db, schema } from "@/db";
-import { devLoginEnabled, isProduction } from "@/lib/config";
+import { devLoginEnabled, isProduction, signinEmailsPerHour } from "@/lib/config";
 import { magicLinkEmail } from "@/lib/magic-link-email";
 import { sendMail } from "@/lib/mailer";
 import { hit } from "@/lib/ratelimit";
@@ -91,15 +91,24 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: !isProduction() || Boolean(process.env.AUTH_URL),
   callbacks: {
     // Runs before a magic link is sent and before Auth.js looks up or creates the user for a GitHub sign-in:
-    // the per-address link limit, the sign-up allow-list, then linking a GitHub account to the user who already
-    // has its verified address.
+    // the per-address link limit, the sign-up allow-list, the server-wide link limit, then linking a GitHub account
+    // to the user who already has its verified address.
     async signIn({ user, account, email }) {
+      // For a magic link, the address it is sent to.
+      const link = email?.verificationRequest && account ? account.providerAccountId : null;
       // Each address may ask for 5 links per 10 minutes, whichever way the request came in (the sign-in page
-      // or a direct POST to /api/auth/signin/email). The key is the address the link is sent to.
-      if (email?.verificationRequest && account && (await hit("signin-email", account.providerAccountId, 5, 10 * 60_000))) {
+      // or a direct POST to /api/auth/signin/email).
+      if (link && (await hit("signin-email", link, 5, 10 * 60_000))) {
         return "/signin?error=rate";
       }
-      return authorizeSignIn({ user, account });
+      const allowed = await authorizeSignIn({ user, account });
+      // All links together, so requests spread over many addresses and networks cannot mail-bomb people
+      // and get the mail account suspended for everyone. GitHub sign-in is not counted.
+      if (allowed && link && (await hit("signin-email-all", "all", signinEmailsPerHour(), 60 * 60_000))) {
+        console.warn("[auth] the server-wide sign-in email limit was reached; links are paused until the hour is up");
+        return "/signin?error=busy";
+      }
+      return allowed;
     },
     session({ session, token }) {
       if (token.sub) session.user.id = token.sub;

@@ -99,3 +99,11 @@ function ipv6Groups(addr: string): number[] {
 export function ipLimit(req: Request, bucket: string, max: number, windowMs: number): Promise<NextResponse | null> {
   return rateLimit(bucket, ipKey(clientIp(req.headers)), max, windowMs);
 }
+
+/**
+ * Stripe Checkout sessions: 10 a minute per account, and 20 an hour per network. Accounts are free to make,
+ * so the network limit is what slows someone opening many sessions to test stolen cards.
+ */
+export async function checkoutLimit(req: Request, userId: string): Promise<NextResponse | null> {
+  return (await rateLimit("billing", userId, 10, 60_000)) ?? (await ipLimit(req, "checkout-ip", 20, 60 * 60_000));
+}

@@ -632,6 +632,7 @@ In Postgres (`rate_limits`, keys hashed), shared by every instance and kept acro
 | Endpoint | Limit | Keyed by |
 |---|---|---|
 | Magic-link emails (Auth.js `signIn` callback, so every path that sends one) | 5 per 10 min | email address |
+| Magic-link emails, all together, so mail spread over many addresses and networks can't get the mail account suspended (`BECKON_SIGNIN_EMAILS_PER_HOUR`); GitHub sign-in is not counted | 300 per hour | the whole server |
 | Sign-in page actions (server actions) | 20 per 10 min | IP |
 | `/api/auth/*` POST | 20 per 10 min | IP |
 | `POST /api/device-code` (anonymous, starts `beckon login`) | 20 per 10 min | IP |
@@ -639,6 +640,7 @@ In Postgres (`rate_limits`, keys hashed), shared by every instance and kept acro
 | `POST /api/device-code/approve` and `/device?code=` lookups (guessing user codes), one shared bucket; a lookup of a code that exists does not count | 10 per 10 min | user |
 | `POST /api/pair/request`, `POST /api/pair/reveal` | 20 per 10 min each | user |
 | Checkout / portal / account deletion | 10 / 10 / 5 per minute | user |
+| Checkout, against card testing from many throwaway accounts | 20 per hour | IP |
 | `POST /api/responses` (M5) | 10 per minute | device |
 
 The IP comes from the one header the deployment's proxy sets (`CLIENT_IP_HEADER`, default Fly's

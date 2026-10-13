@@ -332,6 +332,8 @@ Optional:
 - `BECKON_PLAN_LIMITS=off` gives every account every feature ([Plan limits](#plan-limits)).
 - `BECKON_ALLOWED_EMAILS` and `BECKON_ALLOWED_EMAIL_DOMAINS` restrict who may create an account
   ([step 4](#4-write-the-configuration)).
+- `BECKON_SIGNIN_EMAILS_PER_HOUR` caps the sign-in emails the whole server sends in an hour (default 300). Past
+  it, email sign-in pauses until the hour is up and the log says so; GitHub sign-in still works.
 - `BECKON_OPERATOR`, `BECKON_LEGAL_ADDRESS`, `BECKON_LEGAL_COUNTRY`, `BECKON_LEGAL_EFFECTIVE`, `BECKON_SUPPORT_EMAIL`,
   `BECKON_PRIVACY_EMAIL` and `BECKON_SECURITY_EMAIL` fill in `/terms` and `/privacy`.
 - `CLIENT_IP_HEADER` and `CLIENT_IP_HOPS` tell rate limits which `X-Forwarded-For` entry is the client's.

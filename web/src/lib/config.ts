@@ -70,6 +70,12 @@ export function planLimitsOff(env: Env = process.env): boolean {
   return env.BECKON_PLAN_LIMITS === "off" && !stripeKeysSet(env);
 }
 
+/** `BECKON_SIGNIN_EMAILS_PER_HOUR`: magic links the whole server sends per hour (default 300). */
+export function signinEmailsPerHour(env: Env = process.env): number {
+  const n = Number(env.BECKON_SIGNIN_EMAILS_PER_HOUR);
+  return Number.isInteger(n) && n > 0 ? n : 300;
+}
+
 export interface SignupAllowList {
   emails: Set<string>;
   domains: Set<string>;

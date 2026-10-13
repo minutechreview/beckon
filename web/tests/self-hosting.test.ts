@@ -2,7 +2,8 @@
 // (BECKON_ALLOWED_EMAILS / BECKON_ALLOWED_EMAIL_DOMAINS), operator details, and this server's own commands.
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db, pool, schema } from "@/db";
-import { assertSafeConfig, emailAllowed, installCommand, loginCommand, planLimitsOff, signupAllowList } from "@/lib/config";
+import { assertSafeConfig, emailAllowed, installCommand, loginCommand, planLimitsOff, signinEmailsPerHour, signupAllowList } from "@/lib/config";
+import { signinErrorMessage } from "@/lib/signin-error";
 import { assertCanAddHost, assertCanPairDevice, assertPerAppRules, effectivePlan, hostDecision, usage } from "@/lib/plans";
 import { allowSignIn, normalizeEmail } from "@/lib/signup";
 import { resetRateLimits } from "@/lib/ratelimit";
@@ -255,6 +256,26 @@ describe("magic-link limits through Auth.js", () => {
     const sixth = await requestMagicLink("Victim@Example.com");
     expect(sixth.location).toMatch(/\/signin\?error=rate/);
     expect(sixth.tokens).toHaveLength(5);
+  });
+
+  it("sends at most BECKON_SIGNIN_EMAILS_PER_HOUR links in all, whatever the addresses", async () => {
+    process.env.BECKON_SIGNIN_EMAILS_PER_HOUR = "2";
+    try {
+      expect((await requestMagicLink("ann@example.com")).location).not.toMatch(/error=/);
+      expect((await requestMagicLink("bob@example.org")).location).not.toMatch(/error=/);
+      const third = await requestMagicLink("carol@example.net");
+      expect(third.location).toMatch(/\/signin\?error=busy/);
+      expect(third.tokens.sort()).toEqual(["ann@example.com", "bob@example.org"]);
+      expect(signinErrorMessage("busy")).toMatch(/GitHub/);
+    } finally {
+      delete process.env.BECKON_SIGNIN_EMAILS_PER_HOUR;
+    }
+  });
+
+  it("reads the server-wide link limit, falling back to 300", () => {
+    expect(signinEmailsPerHour({})).toBe(300);
+    expect(signinEmailsPerHour({ BECKON_SIGNIN_EMAILS_PER_HOUR: "50" })).toBe(50);
+    for (const bad of ["0", "-3", "1.5", "many"]) expect(signinEmailsPerHour({ BECKON_SIGNIN_EMAILS_PER_HOUR: bad })).toBe(300);
   });
 
   it("refuses addresses that Auth.js would otherwise fold into another one", async () => {
