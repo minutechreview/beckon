@@ -60,7 +60,8 @@ export interface TestServer {
 /** Serves Next route handlers (the ones that need no browser session) from the test server. */
 export function routeHandlers(routes: Record<string, (req: Request) => Promise<Response>>) {
   return async (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => {
-    const h = routes[`${req.method} ${req.url}`];
+    const key = `${req.method} ${req.url}`;
+    const h = Object.hasOwn(routes, key) ? routes[key] : undefined;
     if (!h) return void res.writeHead(404).end();
     const out = await h(new Request(`http://localhost${req.url}`, { method: req.method, headers: req.headers as Record<string, string> }));
     res.writeHead(out.status, Object.fromEntries(out.headers)).end(await out.text());

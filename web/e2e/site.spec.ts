@@ -114,7 +114,7 @@ test.describe("public site", () => {
     const raw = await page.request.get("/pricing");
     const nonce = /'nonce-([^']+)'/.exec(raw.headers()["content-security-policy"])![1];
     const html = await raw.text();
-    const tags = html.match(/<script\b[^>]*>/g) ?? [];
+    const tags = html.match(/<script\b[^>]*>/gi) ?? [];
     expect(tags.length).toBeGreaterThan(0);
     for (const t of tags) expect(t, t).toContain(`nonce="${nonce}"`);
     // The page itself (hydrated, scripts running) is not blocked.

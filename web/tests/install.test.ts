@@ -50,8 +50,14 @@ beforeAll(async () => {
   fs.writeFileSync(script, fs.readFileSync(SCRIPT_SRC, "utf8").replaceAll("@@REPO@@", "example/beckon"));
   server = http.createServer((req, res) => {
     const f = path.join(root, decodeURIComponent(new URL(req.url!, "http://x").pathname));
-    if (!f.startsWith(root) || !fs.existsSync(f) || !fs.statSync(f).isFile()) return void res.writeHead(404).end();
-    res.writeHead(200).end(fs.readFileSync(f));
+    if (!f.startsWith(root)) return void res.writeHead(404).end();
+    let body: Buffer;
+    try {
+      body = fs.readFileSync(f);
+    } catch {
+      return void res.writeHead(404).end();
+    }
+    res.writeHead(200).end(body);
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
