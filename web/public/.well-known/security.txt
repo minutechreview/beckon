@@ -1,0 +1,6 @@
+Contact: mailto:security@beckoncli.com
+Contact: https://github.com/jaystewartuk/beckon/security/advisories/new
+Expires: 2027-10-13T00:00:00.000Z
+Policy: https://github.com/jaystewartuk/beckon/blob/main/SECURITY.md
+Preferred-Languages: en
+Canonical: https://beckoncli.com/.well-known/security.txt
