@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/jaystewartuk/beckon/security/advisories/new
+    about: Please report security problems privately, never in a public issue.
+  - name: Questions and ideas
+    url: https://github.com/jaystewartuk/beckon/discussions
+    about: Ask how something works, or float an idea before writing it up.
+  - name: Hosted service support (beckoncli.com accounts and billing)
+    url: mailto:support@beckoncli.com
+    about: Account, billing and data questions about the hosted service.

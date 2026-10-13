@@ -1,0 +1,8 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "beckon hook --app codex" }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "beckon hook --app codex" }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "beckon hook --app codex" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "beckon hook --app codex" }] }]
+  }
+}

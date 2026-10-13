@@ -1,0 +1,12 @@
+node_modules/
+.next/
+web/test-results/
+web/playwright-report/
+.env
+.env.local
+web/tsconfig.tsbuildinfo
+web/next-env.d.ts
+*.tsbuildinfo
+web/public/sw.js
+dist/
+web/ui-captures/

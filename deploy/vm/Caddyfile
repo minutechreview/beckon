@@ -1,0 +1,45 @@
+# HTTPS certificate from Let's Encrypt, automatic. WebSockets (/ws/host, /ws/client) are proxied with no extra setup:
+# once upgraded, Caddy tunnels them with no timeout.
+{
+	servers {
+		# HTTP/3 needs UDP 443, which neither the Hetzner firewall nor compose opens: do not advertise it.
+		protocols h1 h2
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
+	}
+}
+
+{$BECKON_HOST} {
+	encode zstd gzip
+	request_body {
+		max_size 1MB
+	}
+	# Access log to stdout (Docker caps it at 3 x 10 MB). Query strings and Referer are dropped: sign-in links carry
+	# tokens there. Caddy already redacts Cookie and Authorization.
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>uri regexp "\?.*$" "?(redacted)"
+				request>headers>Referer delete
+			}
+		}
+	}
+	reverse_proxy app:3000 {
+		# While a deploy restarts the app, hold requests and keep trying it instead of answering 502. A request is
+		# retried only if it never reached the app, or if it is a GET, so a POST is never sent twice.
+		lb_try_duration 20s
+		transport http {
+			# Ordinary requests only: an upgraded WebSocket is past its response headers.
+			response_header_timeout 60s
+		}
+	}
+}
+
+# www has its own certificate and only redirects (DNS: www A/AAAA to the same server, DNS only).
+www.{$BECKON_HOST} {
+	redir https://{$BECKON_HOST}{uri} permanent
+}

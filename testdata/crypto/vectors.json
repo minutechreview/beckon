@@ -1,0 +1,272 @@
+{
+  "_comment": "Shared Go/TypeScript crypto vectors. Keys are hex; envelopes are the wire form (base64url of the envelope JSON). 'go' envelopes were sealed by the helper, 'ts' by web/src/lib/crypto; each suite must open the other's.",
+  "keys": {
+    "attacker": {
+      "sign_seed": "f5bd900d60899617ab870009deb2c185b67290ac6043362573b5633fbc7108e8",
+      "box_secret": "4dc13fd1a9b9ebf9697d574bad4b77fc7552f17c68001d43ef679ae1e782d95d",
+      "sign_public": "4233eeb33bea18589485d6c8d25f56b6578899ec3ad2db7e7694fdce9d87ea6c",
+      "box_public": "c3a6b99be2ff8e19a3af5ac12c794eaa5e123b0a4714d22c535772e34204c552"
+    },
+    "device": {
+      "sign_seed": "0680d736539ac2ccb46ce9c3d5f65166ec4909153d8f6ac8a3dacf64260a8aeb",
+      "box_secret": "9261e5c9ae511502d3987a37646489e1b22594cde7a5f48ec5272144d2c29bd4",
+      "sign_public": "34a50b9d75ec81feddf096af358b3084a4625fb8a7f534fedf05adaeb4329826",
+      "box_public": "b4e103de563e806991390ae0ea0cc8a6cfdbba7695adf9257c8139be5943766b"
+    },
+    "device2": {
+      "sign_seed": "5bbbe4d31511dd03b880d67f224e2ca5dbeba9af5696bd4f3b6ca802bfeaa77e",
+      "box_secret": "3d0428b6f03f70bbb208747f75e493773180ff632bf3167e5affd618e1ca8121",
+      "sign_public": "84d40e7ce3df16285e4db62fd5d4bdd11b3f604baf1eb373e9fc9e843bed12ad",
+      "box_public": "5d7561de439f6576f48ea9b652187da769511c0a23bda6e1446c451c72444231"
+    },
+    "host": {
+      "sign_seed": "f4481848b3a63f7ed33673fd503ad2085d9a7b1575a500f16ff050811b5417c2",
+      "box_secret": "cb333cd31292a0fe442fb137ea12422b430fea716adc6b6d6cb212fe977bdab2",
+      "sign_public": "4a260f4b42829367756944b235637ae8d954ea8ae0c3a45daf26a84b4e5e1e3e",
+      "box_public": "bdde50af9e960f819483f8279af45d8a560ca603d10546e89e0eb07c1d18e864"
+    }
+  },
+  "device_ids": {
+    "device": "01927a3e-0000-7000-8000-00000000d001",
+    "device2": "01927a3e-0000-7000-8000-00000000d002"
+  },
+  "safety_codes": [
+    {
+      "host": "host",
+      "device": "device",
+      "host_nonce": "fe8537e8916264de40462297d7c1095e798d27085b1bc387db2d2ba2228c7dca",
+      "device_nonce": "1988bc95bf5148aaae69c6f12137a81aa5e7259a698933db71659cf66030c9ba",
+      "commitment": "a9ae2aabb577b1824841779321bfab52e1f2987252d94d21087c7c91796bc7fc",
+      "words": "major reopen drink wash dry behind"
+    },
+    {
+      "host": "host",
+      "device": "device2",
+      "host_nonce": "fe8537e8916264de40462297d7c1095e798d27085b1bc387db2d2ba2228c7dca",
+      "device_nonce": "978d7ba5fdea9d70a124d518c56206234e4534465d45a9953b1662fe70cc3a0d",
+      "commitment": "95026f3dd44005fbb07e3e9a29209aca98914917ebca9d5e5b7f35df34208cce",
+      "words": "eight mixture viable recipe upgrade business"
+    },
+    {
+      "host": "attacker",
+      "device": "device",
+      "host_nonce": "407c29291bfae95f3cdde3ea351b974e8b471b5444802e235fa692f3647babd0",
+      "device_nonce": "1988bc95bf5148aaae69c6f12137a81aa5e7259a698933db71659cf66030c9ba",
+      "commitment": "a9ae2aabb577b1824841779321bfab52e1f2987252d94d21087c7c91796bc7fc",
+      "words": "when copper brisk explain private during"
+    }
+  ],
+  "ad": [
+    {
+      "field": "body",
+      "session_id": "01927a3e-5b1c-7d2e-8f3a-4b5c6d7e8f90",
+      "path": "",
+      "revision": 1,
+      "hex": "6265636b6f6e2d61642d76310000000004626f64790000002430313932376133652d356231632d376432652d386633612d346235633664376538663930000000000000000000000001"
+    },
+    {
+      "field": "body",
+      "session_id": "01927a3e-5b1c-7d2e-8f3a-4b5c6d7e8f90",
+      "path": "deploy/us-east",
+      "revision": 42,
+      "hex": "6265636b6f6e2d61642d76310000000004626f64790000002430313932376133652d356231632d376432652d386633612d3462356336643765386639300000000e6465706c6f792f75732d65617374000000000000002a"
+    },
+    {
+      "field": "meta",
+      "session_id": "01927a3e-5b1c-7d2e-8f3a-4b5c6d7e8f90",
+      "path": "",
+      "revision": 0,
+      "hex": "6265636b6f6e2d61642d763100000000046d6574610000002430313932376133652d356231632d376432652d386633612d346235633664376538663930000000000000000000000000"
+    }
+  ],
+  "signature": {
+    "context": {
+      "field": "body",
+      "session_id": "01927a3e-5b1c-7d2e-8f3a-4b5c6d7e8f90",
+      "path": "deploy/us-east",
+      "revision": 42
+    },
+    "nonce": "7481f30206636e024c6d9ed2ff36bb20bae9576a89f36db8",
+    "ciphertext": "0e0b6d0b4d3a0c88e2661678c2afc8f6dbfd07a0b24d24d0526ae3895782bdd2",
+    "recipients": [
+      {
+        "device_id": "01927a3e-0000-7000-8000-00000000d001",
+        "sealed_key": "0101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101"
+      },
+      {
+        "device_id": "01927a3e-0000-7000-8000-00000000d002",
+        "sealed_key": "0202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202"
+      }
+    ],
+    "signed_message": "6265636b6f6e2d656e76656c6f70652d763100000000576265636b6f6e2d61642d76310000000004626f64790000002430313932376133652d356231632d376432652d386633612d3462356336643765386639300000000e6465706c6f792f75732d65617374000000000000002a000000187481f30206636e024c6d9ed2ff36bb20bae9576a89f36db8000000200e0b6d0b4d3a0c88e2661678c2afc8f6dbfd07a0b24d24d0526ae3895782bdd2000000020000002430313932376133652d303030302d373030302d383030302d3030303030303030643030310000005001010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010000002430313932376133652d303030302d373030302d383030302d303030303030303064303032000000500202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202",
+    "sig": "4f638183c4efb3659a8376ead6a1db79aa9489d36199a0628bef840a883cd7fbbfd7284e9da51767802095e300ccdeab9675dba542565e5cd57117a930179f01"
+  },
+  "revocation": {
+    "device_id": "01927a3e-0000-7000-8000-00000000d002",
+    "sign_pubkey": "84d40e7ce3df16285e4db62fd5d4bdd11b3f604baf1eb373e9fc9e843bed12ad",
+    "by_device_id": "01927a3e-0000-7000-8000-00000000d001",
+    "issued_at": "2026-10-09T12:00:00Z",
+    "signer": "device",
+    "message": "6265636b6f6e2d7265766f6b652d7631000000002430313932376133652d303030302d373030302d383030302d3030303030303030643030320000002084d40e7ce3df16285e4db62fd5d4bdd11b3f604baf1eb373e9fc9e843bed12ad0000002430313932376133652d303030302d373030302d383030302d30303030303030306430303100000014323032362d31302d30395431323a30303a30305a",
+    "signature": "38abaf0c5c6e8c03fb36272e529bbed45cd8397c1712a8f50d77db245e1f3fdfaecb97207990bf0626cc4fe1723da5120ec9f169d5c26b7c9491bd4e20fd5a06"
+  },
+  "envelopes": {
+    "go": [
+      {
+        "context": {
+          "field": "body",
+          "session_id": "01927a3e-5b1c-7d2e-8f3a-4b5c6d7e8f90",
+          "path": "",
+          "revision": 1
+        },
+        "plaintext": "{\"title\":\"Permission\",\"msg\":\"Run rm -rf build/? — ünïcödé ✓\"}",
+        "recipients": [
+          "device",
+          "device2"
+        ],
+        "envelope": "eyJ2IjoxLCJyZWNpcGllbnRzIjpbeyJkZXZpY2VfaWQiOiIwMTkyN2EzZS0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMGQwMDEiLCJzZWFsZWRfa2V5Ijoib3ZnV0dqZEV6Zm1UeklYdkNKQXZfZU16bnlOTW9NSm1XQWhod3I1QVBWWWlOT21weHRULThrR1VIUGI5TWYtRWRJdnd1ZWgzblJBY0Z0Tm9FTWw4djl4QklJaXZLQmtZN2hWcUFKZVYxT0EifSx7ImRldmljZV9pZCI6IjAxOTI3YTNlLTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwZDAwMiIsInNlYWxlZF9rZXkiOiI4TUJfdTVNem1jc3Y0Tm1Oel9xMDdlY3N5NG9CR0NGWEY0Q2J6X0lrTzMxV0U0OUx0QURWbHUtaDBaRkZkV2VDcWZRNVAyUTBSNTAzbU4xWWlhWWFiZ1FmYmRGUXdRTmllWTI5c2MteElaOCJ9XSwibm9uY2UiOiJ2WmdPdXJzRmFFbHIxaUdnS0hPTDZNQjJXaTRnb0pSNyIsImNpcGhlcnRleHQiOiJQMzVqLUxrdUNXUHJmUlkwb25tbW9CNGlNV1Bua0F1SHdUbmc3am5BX3YwZFVIYkI4Y3ZRTU1RN2VjbE91bHAzWEplUHEzLTJvV3QzV2VleHFFNHRSZVg0U0tBT2wyUHFqSUN1QjhGMDF2VlUtbnFrVXciLCJzaWciOiJQdXRzU1ZkMUdjbE1TOGstOEFRZGtDN3ZLUnIxM1MzYUg3UFEwLUJnZU1uWlBVVEg1c1FSNlJveThxQ1FQcW9GV2otRHZxbS0zOEhOYXFZN0wtdzZDQSJ9"
+      },
+      {
+        "context": {
+          "field": "body",
+          "session_id": "01927a3e-5b1c-7d2e-8f3a-4b5c6d7e8f90",
+          "path": "deploy/us-east",
+          "revision": 42
+        },
+        "plaintext": "{\"msg\":\"deploying 40%\"}",
+        "recipients": [
+          "device2"
+        ],
+        "envelope": "eyJ2IjoxLCJyZWNpcGllbnRzIjpbeyJkZXZpY2VfaWQiOiIwMTkyN2EzZS0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMGQwMDIiLCJzZWFsZWRfa2V5Ijoiel90cnA0RHAwcGFmR0lYTnhFVWNvbDNYSm1zX0t6ZEFiVnZ3VFlrN2VtTFI2bnpFckZlb1JlUE9qOGYwOEx1d1Qyc2pyYkZZbFYwTTN6Y29Rb2FjT21mVGNtRDEtVFh3Tml3a2thN09MSDAifV0sIm5vbmNlIjoiWG55aHFCYVR0cFBIaTJXVXZSUl83VFpPZEtnMUI2ZGgiLCJjaXBoZXJ0ZXh0IjoiZ2ZSajhya3J5S3otMV9xSWNTSEFtaUdHaWFZdXoxdGUxbmlBdGdqUzhaUkRoZGhJRWM2RyIsInNpZyI6IlkxUTBTSW9MQzMzeHp1QkZadllJMzg4eElKZ29QSlFhdndLTHRyR29zekl2SjZ2TkxxcEpYSDFxWkxINlZBSUNfTnJOU0pNUTM4UW9SVXdIUGFWYUJnIn0"
+      },
+      {
+        "context": {
+          "field": "meta",
+          "session_id": "01927a3e-5b1c-7d2e-8f3a-4b5c6d7e8f90",
+          "path": "",
+          "revision": 0
+        },
+        "plaintext": "{\"argv\":[\"terraform\",\"apply\",\"-auto-approve\"],\"cwd\":\"/srv/infra\",\"pid\":4242}",
+        "recipients": [
+          "device",
+          "device2"
+        ],
+        "envelope": "eyJ2IjoxLCJyZWNpcGllbnRzIjpbeyJkZXZpY2VfaWQiOiIwMTkyN2EzZS0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMGQwMDEiLCJzZWFsZWRfa2V5IjoiOV9HY2FBQThab2FoaGxsTENzTmpEc2NNeTA1bUl2dkZYc0o4LTRQNGJqWVdGMlg2ZkMyMGJjT0ZCcnhaQ2pxb3JJSzQ2QU14M1JkVXFKZUJ3dTZwM1pOREhJRlpvX0Q5R1p5VXJzRnRJc2MifSx7ImRldmljZV9pZCI6IjAxOTI3YTNlLTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwZDAwMiIsInNlYWxlZF9rZXkiOiJJZG1fWlQ1SkQtdWxRTTJRS3Y5UXVkSFVzcVBpQ1NlRHBXb3MzX3hZTTNrc08wNFZGYkpmWkpjT0x3V1lyNG5sSVdJQ180eWYxR01tVDNSRUhtRlp3eUxRbGZFWnFuSkFudE92T3ZRcGdVZyJ9XSwibm9uY2UiOiJiRE1oWjlNWHd4QjZGVGhVcDFKWFhFcGpLc0J5UGIybSIsImNpcGhlcnRleHQiOiJhdmYxelpSYWpyV0gwcG95OHRuWVdSaVpyT1RyVmc0U3BlQmVUdng4a0xWSGlmZDl2UzJkRUlHVGM2eGtOelVnaGxZNHVJVW5NYUdNOHpUZkpVS01vTTJVOTRGcXRNdWZuTGhfYm9MYTJObGxkdy1RM1JVQ1BLenJxVnMiLCJzaWciOiJQb0tzUlFIUXRoM3FhUjFNanA5cWhKRjRsSjRYbWpRWGlOOXoyTHMzOVd3c1hUSVJxdTh2Z2tBZWxkNkNJNDNBRVQxSXI2elBrQWZoMHFCbExFZjJCdyJ9"
+      }
+    ],
+    "ts": [
+      {
+        "context": {
+          "field": "body",
+          "session_id": "01927a3e-5b1c-7d2e-8f3a-4b5c6d7e8f90",
+          "path": "",
+          "revision": 1
+        },
+        "plaintext": "{\"msg\":\"sealed in TypeScript ✓\",\"title\":\"TS\"}",
+        "recipients": [
+          "device",
+          "device2"
+        ],
+        "envelope": "eyJ2IjoxLCJyZWNpcGllbnRzIjpbeyJkZXZpY2VfaWQiOiIwMTkyN2EzZS0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMGQwMDEiLCJzZWFsZWRfa2V5IjoiX3FUblN6TVVveE56c3BPdldwUlNjd1pLXzF5MTR0QkRQRE4tOThuVlVRMjQ0TlNXbEF2NWx4QnQ3SlRsYlhsWlNfalhHc1g4SmZ4V3VmV3lYYXl4NDVPMmFlb1Z2Wjg3MXV6eEpISlo1Z00ifSx7ImRldmljZV9pZCI6IjAxOTI3YTNlLTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwZDAwMiIsInNlYWxlZF9rZXkiOiI0UmxiUXEydDRTdkFzcl9MOElZb0xkRjl0T0xWOWlIZFBMUUg5X240VEUxb3ZjeTdsdkhyd29TMmdXNWlPNjBCUWtHeEIzeEJreTRvRk5maGdZTlF5T0pCYmhEbTRrVXpSUi11elJSaGtBdyJ9XSwibm9uY2UiOiJyUkptVEYyOUdhT3ZpLUk3Ym1ld2NXN2lfRXB4MjBPZyIsImNpcGhlcnRleHQiOiJnb1hQaEg1R3ExSW5vcy1YcVhMaEYwYVlpVEpQcjM0VFVuSjV5SVVHQW9LNTlVbUJfRDBONmwwQ3NwYlBaMHltR1MzMENHUnhPMVFNWjJmVm5TVzciLCJzaWciOiJ4U2NVUEU5Q1RvZEpxMTdpR0UwSGNMZjFEaW5OcFZfR0hpOFZPbDFMZVh4anNJTXpkOW40RzZIS3BsbUs4aXczMHZiZFY0V2d1a3ZuZUQ5SHlvUE9BUSJ9"
+      },
+      {
+        "context": {
+          "field": "body",
+          "session_id": "01927a3e-5b1c-7d2e-8f3a-4b5c6d7e8f90",
+          "path": "deploy/us-east",
+          "revision": 42
+        },
+        "plaintext": "{\"msg\":\"deploying 40%\"}",
+        "recipients": [
+          "device"
+        ],
+        "envelope": "eyJ2IjoxLCJyZWNpcGllbnRzIjpbeyJkZXZpY2VfaWQiOiIwMTkyN2EzZS0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMGQwMDEiLCJzZWFsZWRfa2V5IjoiNGZWV2JiN200WFFLNUJteWpXTHpvbHNqaW41dFN1eU5FV3Zwd19aSlhWWTRCeFp4d2NQalZGU2t1Z0VVRF9SdXJjU19LUi1NdjJnUDFFX3lRaUF4T2gwVXlNR1F4a01ISDFjckxhOUNfVTQifV0sIm5vbmNlIjoiMmlZZ0R1Ml9qaFNrSnZpVjJRdnlwZExkWV9Md3MyeE0iLCJjaXBoZXJ0ZXh0IjoiMmU3SXg3Skswd3g5NG5wemktcnRZUjVycFBDVXZYdGU0ZVhPYk9ibi1vTkVoV1E5anZsSCIsInNpZyI6IldnZ1ZldG1kS01CdzRXWG02dWtHUWR2eVJHbXJmYlJQYzkta2lrVFNRRVYtbFFZdVZEdVdlY0t6Z0ZjRmtTbDVKM1JtRVpGM3VVTUNJWGNDVTk5akRBIn0"
+      },
+      {
+        "context": {
+          "field": "meta",
+          "session_id": "01927a3e-5b1c-7d2e-8f3a-4b5c6d7e8f90",
+          "path": "",
+          "revision": 0
+        },
+        "plaintext": "{\"argv\":[\"terraform\",\"apply\",\"-auto-approve\"],\"cwd\":\"/srv/infra\",\"pid\":4242}",
+        "recipients": [
+          "device",
+          "device2"
+        ],
+        "envelope": "eyJ2IjoxLCJyZWNpcGllbnRzIjpbeyJkZXZpY2VfaWQiOiIwMTkyN2EzZS0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMGQwMDEiLCJzZWFsZWRfa2V5IjoiWFBYcWxlSkdXRTlTV0c5aGZxTjFfQm0xVkJzMlFlaWx4RUdKc2lVbV96bVFFU2RfWmpWdzU2QlljM205Z0JRdHlMdWNlN2c1aFNRUWN2cTMwN01MaVBRSElHbkJaS191czRhRGwtT2l2WlUifSx7ImRldmljZV9pZCI6IjAxOTI3YTNlLTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwZDAwMiIsInNlYWxlZF9rZXkiOiJKTTJ2eV95emxMRG5hTnNqYTNEWGdGSm1wckxJYmdNemFnaml1TU42MTF1MnEzNHhDWFI2MlRrb3Y2cS1MNUJXRUFmdURDa3dPQk1pYm1zd2pjYzhheHVOMTZOUFN1d3J3NVJ6MTl3TEE4RSJ9XSwibm9uY2UiOiI0ZU9xVGppVVlEWjU5RzdiREJPNV9uYXhsd1BMQ21fUyIsImNpcGhlcnRleHQiOiJpbU5CUXJTTDJJX1J1dDBiV0lzN0lFb3R2bHBaaHY2NUVXZGhjV0kteU44ekgxTWcyazdVLUUzT2h5dkVzUmt4bVBpWU14TUs5aVY5ZXpRaUdMck5Sc20xN19iTDliWlcwX1JFVDRTN1FORUFYbDVKR3otWlJjZ09ubDAiLCJzaWciOiJENGlpanM2V0phdDI4bmxrd0Q2Ym5NemtScXJIMHNIdjA1XzliNG5UUWQ5RVdTWGNReG1FTFl6dFRpNExJYjIwdnJyQ0wwRjllTlhSMGpTS1BYdmpBUSJ9"
+      }
+    ]
+  },
+  "response": {
+    "routing": {
+      "device_id": "01927a3e-0000-7000-8000-00000000d001",
+      "session_id": "01927a3e-5b1c-7d2e-8f3a-4b5c6d7e8f90",
+      "path": "deploy/us-east",
+      "record_revision": 42,
+      "response_id": "01927a3e-0000-7000-8000-00000000a001"
+    },
+    "ciphertext": "1e368880483f1b7050fc1e254b8fbea9ec55eb41114118987ee03087d493cdc3",
+    "signer": "device",
+    "message": "6265636b6f6e2d726573706f6e73652d7631000000002430313932376133652d303030302d373030302d383030302d3030303030303030643030310000002430313932376133652d356231632d376432652d386633612d3462356336643765386639300000000e6465706c6f792f75732d65617374000000000000002a0000002430313932376133652d303030302d373030302d383030302d303030303030303061303031000000201e368880483f1b7050fc1e254b8fbea9ec55eb41114118987ee03087d493cdc3",
+    "signature": "524f0d40e9a3932ca541664b72d6a9feec62d1ae811aa8ae4bd6f49edab89e340de433aa0bf5f068bb9bc840b7d8b80dd008d247fd8f80d83f1926b73ff4bd0f",
+    "sealed": {
+      "go": [
+        {
+          "payload": {
+            "response_id": "01927a3e-0000-7000-8000-00000000a001",
+            "device_id": "01927a3e-0000-7000-8000-00000000d001",
+            "session_id": "01927a3e-5b1c-7d2e-8f3a-4b5c6d7e8f90",
+            "path": "deploy/us-east",
+            "record_revision": 42,
+            "option_id": "approve",
+            "nonce": "pdRWyarovwIcdLsiAY0nTQ",
+            "issued_at": 1791590400000
+          },
+          "ciphertext": "c06bffee1ec7acf6623c7709e384ab998310b6c73f06c7c18e3b45ff875ca62e7ecd0e194008e3dda35cd12dbd497ae04474a18674fe0dc7190e462092808177d3aa7de74080b79c13396c35b0f90812c21a50d423d4a14fe79a2dbc85b16c4e1a0a8fcb0924c3978464c7850fb903d5406a49fc8b68aac5a830155aace73867f091fea4d1fb06219e3e069e530f8bc24372efe13e23296f66ab395798ff76e7065d3b5fbf119bc4d7c798958bb09289c4063201319e83c200ad503913377a28fd931362e01b3a6f12b0d5f3d286574a8abed69ab9b52e2f341dd3357ff62ac25f97e162bc0f56ad36db08a32a8a4b69d8ed82a2ec0312e09e8203a462ec614f26c1d441f11b86bdc9423944de37e1307b143fbf53f99c9ce2b73c95ee324b90f5ccfff22770358064648d62e8a85d6b68226f81646b3db383d8a1d3227af66a05c218e2fb839ceaca7354"
+        },
+        {
+          "payload": {
+            "response_id": "01927a3e-0000-7000-8000-00000000a001",
+            "device_id": "01927a3e-0000-7000-8000-00000000d001",
+            "session_id": "01927a3e-5b1c-7d2e-8f3a-4b5c6d7e8f90",
+            "path": "deploy/us-east",
+            "record_revision": 42,
+            "option_id": "deny",
+            "nonce": "VTRiiVjba369mURKbW4oiQ",
+            "issued_at": 1791590400001
+          },
+          "ciphertext": "a2d34c8ea151eec661e5a806a159d9bafabb5769491b142da394c8da34007462ca59aef9f801f8f74a0b488b51165c10474e50bde0298a702433bc04bf19ef9950cd5319e8dff5dfe6b0c3bbc80f60fc0392ec6504790cf7d95356b0fe6a8821d0cee5f47916be52ab6c90bb79c15a92b4ace5801b0dced2937c661f0df0624a5438e0a6f9d9921bc0582c7da37ae0e9a6267b054e1a2aa899a8cb14c59616b387b6256f2efae214e068efbf5983271a427d7ef2edf027f571eb89822b9e9f8c88ac75b6afbefaf39046f732374173df265b12629c6128407eecba874f08f398fe623d4c622ad457e733688c4f4015f34caa4065da26f4e4acc833dd310706359705e1d765415728aad8679b492cd70109bddb27931681d946cf67a43cbeeb78b72ad4367b6a5a74e5a6a362ddf085291c74e8dadd685f5ca6e199fbec180f04c68d711da734724c"
+        }
+      ],
+      "ts": [
+        {
+          "payload": {
+            "response_id": "01927a3e-0000-7000-8000-00000000a001",
+            "device_id": "01927a3e-0000-7000-8000-00000000d001",
+            "session_id": "01927a3e-5b1c-7d2e-8f3a-4b5c6d7e8f90",
+            "path": "deploy/us-east",
+            "record_revision": 42,
+            "option_id": "approve",
+            "nonce": "pdRWyarovwIcdLsiAY0nTQ",
+            "issued_at": 1791590401000
+          },
+          "ciphertext": "ee92840d556429fd5644be14d6fb0dcca1db6b17db0af6559ff69cb251760b4dd3f393dd95b78bdcdc188e071e58810f5a1dc9a0794d5074ffe10c139f49f3d31891582cf56d23e2d96d8aeba54102ad3ef8e98ce94273228add12da0dedf771de9689f1999a5678d728e9e9d67c19e05920347bec4def8fc1c198ca25296797baea2564325bddc4e63792cebea5a8cc4898bca0bef385b6ea67b7136d65f4fa4ee34007cd135a8b7e85e397bd83167083241c27bf2ab7964089ae045c17f7bdffe621abe56114f7e7459466cb90fe31350349dcd8e9b2fd87866565b3313cf9c0910e86348bab20273c886324b25fa23e80701775833cc94d27746f3d75a31f089b418991a42f55f1da57ff2dd52592f192f80357a620b11ac756767bdc9715d63ddc189fbbca660e25234cfaecf849c62a966fd7fcdf072858264233c46991ac41cf71fe1621f8d754f5"
+        },
+        {
+          "payload": {
+            "response_id": "01927a3e-0000-7000-8000-00000000a001",
+            "device_id": "01927a3e-0000-7000-8000-00000000d001",
+            "session_id": "01927a3e-5b1c-7d2e-8f3a-4b5c6d7e8f90",
+            "path": "deploy/us-east",
+            "record_revision": 42,
+            "option_id": "deny-✓",
+            "nonce": "VTRiiVjba369mURKbW4oiQ",
+            "issued_at": 1791590401001
+          },
+          "ciphertext": "9fac43d204661fd5a1fe3c7bf6af9460b566f6959172223e083a89a24a546947846475413278c441afd273afdfd847b2ef2cb7a10a1c55d315b5dff47d2175ef9a9bc512cf27c07be8dc36166c78686e563a843234a1b5ce5cebe780073f4208008fbf5547ef1617e00572d5a8a78d8d0c5554e2e48495d43529775379f0136ae1f469aa3a8a0791260225451356e5539f32ef2633428d2f22fff6c1c8988c03f0ce6f3188d754a348a6a2123ed0e2d644da0d7bc1afd9d4bbee435bd6fc4697822836c9d5046f3113c8086cbdb0f087a8e8525365abcaee81257a2facbcf1bcf7b051f2187818f3817bea58fc26f78d7637d137f985e959b78795fddfd507ec6b1b3f55a790a53dd66a40a76c24385ed5902b9f0cab03903f118948f833d8d6efc5e59024be0a8ce5bd9b6a07cde161be0cdabf04800993cbb203586f38c10378a5f483bf579a02abc1d951"
+        }
+      ]
+    }
+  }
+}

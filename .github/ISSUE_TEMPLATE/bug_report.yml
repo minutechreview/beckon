@@ -1,0 +1,57 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Security problems go to [private reporting](https://github.com/jaystewartuk/beckon/security/advisories/new), not here.**
+        Please remove anything personal from logs (paths, hostnames, emails, tokens) before pasting.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. beckon run -- ...
+        2. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options:
+        - Helper (beckon CLI)
+        - Web app or notifications
+        - Installer
+        - Self-hosting / deployment
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: server
+    attributes:
+      label: Server
+      options:
+        - Hosted (beckoncli.com)
+        - Self-hosted
+        - Local development
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: "`beckon --version`, OS and terminal, the agent or program (and its version), browser and device for web issues."
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`beckon doctor` output or logs"
+      render: text

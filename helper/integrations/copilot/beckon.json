@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "hooks": {
+    "userPromptSubmitted": [{ "type": "command", "bash": "beckon hook --app copilot prompt" }],
+    "postToolUse": [{ "type": "command", "bash": "beckon hook --app copilot tool" }],
+    "notification": [{ "type": "command", "bash": "beckon hook --app copilot notification" }],
+    "agentStop": [{ "type": "command", "bash": "beckon hook --app copilot stop" }]
+  }
+}

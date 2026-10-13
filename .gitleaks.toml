@@ -1,0 +1,18 @@
+# gitleaks configuration: the default rules, minus known test fixtures that look like keys.
+# Run locally with:  gitleaks git --redact .
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures and dummy values, not secrets"
+paths = [
+  '''^testdata/crypto/vectors\.json$''',  # deterministic crypto interop vectors (test-only keys)
+  '''^web/e2e/paths\.ts$''',              # test-only VAPID pair, labelled as such
+]
+regexes = [
+  '''BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQt''',  # dummy push subscription used to validate VAPID keys at start-up (push.ts)
+  '''tBHItJI5svbpez7KI4CCXg''',                       # its dummy auth secret
+  '''dGhlIHNhbXBsZSBub25jZQ==''',                          # RFC 6455 sample Sec-WebSocket-Key
+  '''KEYS?_?SENTINEL''',                                   # sentinel strings tests assert never leak
+  '''E2EKEYS''',
+]

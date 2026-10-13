@@ -1,0 +1,22 @@
+#!/bin/sh
+# Starts tinyproxy for the sandbox (devbox/local). ALLOW is the allowed domains, separated by spaces; each one
+# also allows its subdomains. Everything else is refused, and the refusals are logged (docker logs).
+set -eu
+: "${ALLOW:?ALLOW is empty}"
+for d in $ALLOW; do
+  printf '(^|\\.)%s$\n' "$(printf %s "$d" | sed 's/\./\\./g')"
+done >/tmp/allow
+cat >/tmp/tinyproxy.conf <<CONF
+Port 8888
+Listen 0.0.0.0
+Timeout 600
+MaxClients 200
+LogLevel Info
+DisableViaHeader Yes
+Filter "/tmp/allow"
+FilterType ere
+FilterDefaultDeny Yes
+FilterURLs Off
+ConnectPort 443
+CONF
+exec tinyproxy -d -c /tmp/tinyproxy.conf

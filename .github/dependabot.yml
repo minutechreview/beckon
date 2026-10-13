@@ -1,0 +1,44 @@
+# Dependency updates, weekly. Base images are pinned by version and digest (Dockerfile, deploy/vm/compose.yaml); when
+# a pinned image has a newer build or patch release, merging the PR rolls it out (deploy/vm/autodeploy.sh).
+version: 2
+updates:
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    # Stay on Node 22, the version CI tests; a major is a deliberate change.
+    ignore:
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: docker-compose
+    directory: /deploy/vm
+    schedule: { interval: weekly, day: monday }
+    # A Postgres major needs a dump and restore, and Caddy 3 a review: never as an automatic bump.
+    ignore:
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
+      - dependency-name: caddy
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    # cosign-installer 4 installs cosign 3, whose sign-blob needs --bundle: a signing and install.sh change, not a bump.
+    ignore:
+      - dependency-name: sigstore/cosign-installer
+        update-types: ["version-update:semver-major"]
+    groups:
+      actions: { patterns: ["*"] }
+  - package-ecosystem: gomod
+    directory: /helper
+    schedule: { interval: weekly, day: monday }
+    groups:
+      go-minor: { update-types: [minor, patch] }
+  - package-ecosystem: npm
+    directory: /web
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 10
+    # TypeScript 7 (the native compiler) is a deliberate migration, once Next.js's build-time type check supports it.
+    ignore:
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+    groups:
+      npm-minor: { update-types: [minor, patch] }

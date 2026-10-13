@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [{ "command": "beckon hook --app cursor" }],
+    "afterShellExecution": [{ "command": "beckon hook --app cursor" }],
+    "postToolUse": [{ "command": "beckon hook --app cursor" }],
+    "stop": [{ "command": "beckon hook --app cursor" }]
+  }
+}

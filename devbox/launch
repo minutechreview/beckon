@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# Starts a coding agent on your devbox from your laptop: a fresh git worktree of the repository, the agent under
+# beckon with your prompt, in its own window of the tmux session "agents". Close the laptop; Beckon tells your
+# phone when the agent needs you. Or starts a chain: prompt files from the repository, run one after another,
+# each in a fresh Claude Code session (devbox/chain). Guide: docs/devbox.md
+#
+#   devbox/launch [-a agent] [-r repo] [-b branch] [-m model] [--effort level] [--attach] [prompt | -]
+#   devbox/launch --chain GLOB [--check CMD] [-m model] [-r repo] [-b branch] [--attach]
+#   devbox/launch --repos
+#
+#   -a agent      claude, codex, gemini, copilot, cursor or opencode (asks if not given)
+#   -r repo       owner/name on GitHub, or a git URL (asks if not given, offering the repositories already on the box)
+#   -b branch     the new branch for the worktree (default: <agent>-<date>-<time>, or chain-<date>-<time>)
+#   -m, --model M the agent's model, passed as its --model option (claude, codex, gemini, cursor, opencode; a chain
+#                 uses Claude Code's); without it the agent picks its own default
+#   --effort E    reasoning effort: low, medium, high, xhigh or max for claude; low, medium, high or xhigh for
+#                 codex; without it the agent picks its own default
+#   --repos       print the repositories already cloned on the box, one per line, and exit
+#   --attach      attach to the tmux session afterwards
+#   --chain GLOB  run the repository's prompt files matching GLOB, in name order, with Claude Code: for example
+#                 'docs/prompts/*.md' (quote it, so your own shell leaves it alone)
+#   --check CMD   with --chain: a command that must pass before the next stage starts, for example 'make test'
+#   prompt        the agent's first prompt; - reads it from stdin; asked for if not given (leave empty for none)
+#
+# Environment: DEVBOX_HOST (default dev@devbox, the box's Tailscale name), DEVBOX_SSH (default ssh).
+# It runs nothing on the box except over your own SSH login.
+set -euo pipefail
+HOST="${DEVBOX_HOST:-dev@devbox}"
+SSH="${DEVBOX_SSH:-ssh}"
+AGENTS=(claude codex gemini copilot cursor opencode)
+die() { echo "devbox launch: $*" >&2; exit 1; }
+usage() { sed -n '/^#   devbox/,/^# It runs/p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+agent="" repo="" branch="" attach=0 prompt="" have_prompt=0 chain="" check="" model="" effort="" list_repos=0
+while [ $# -gt 0 ]; do
+  case $1 in
+    -a) agent=${2:?-a needs an agent}; shift 2 ;;
+    -r) repo=${2:?-r needs a repository}; shift 2 ;;
+    -b) branch=${2:?-b needs a branch}; shift 2 ;;
+    -m | --model) model=${2:?--model needs a model}; shift 2 ;;
+    --effort) effort=${2:?--effort needs a level}; shift 2 ;;
+    --repos) list_repos=1; shift ;;
+    --attach) attach=1; shift ;;
+    --chain) chain=${2:?--chain needs a pattern}; shift 2 ;;
+    --check) check=${2:?--check needs a command}; shift 2 ;;
+    -h | --help) usage ;;
+    -) prompt=$(cat); have_prompt=1; shift ;;
+    --) shift; prompt="$*"; have_prompt=1; break ;;
+    -*) usage 2 >&2 ;;
+    *) prompt="$*"; have_prompt=1; break ;;
+  esac
+done
+
+interactive() { [ -t 0 ] && [ -t 1 ]; }
+# Clones on the box, not their worktrees: a clone's .git is a directory, a worktree's is a file.
+known_repos() {
+  "$SSH" "$HOST" 'for d in ~/src/*/; do [ -d "$d.git" ] && git -C "$d" remote get-url origin; done 2>/dev/null' \
+    </dev/null || true
+}
+if [ "$list_repos" = 1 ]; then known_repos; exit 0; fi
+if [ -n "$chain" ]; then
+  [ -z "$agent" ] || [ "$agent" = claude ] || die "a chain runs Claude Code only"
+  [ "$have_prompt" = 0 ] || die "a chain takes its prompts from the files, not a prompt"
+  agent=claude
+elif [ -n "$check" ]; then
+  die "--check goes with --chain"
+fi
+if [ -z "$agent" ]; then
+  interactive || die "no agent: use -a"
+  PS3="Agent: "
+  select agent in "${AGENTS[@]}"; do [ -n "$agent" ] && break; done
+fi
+if [ -z "$repo" ]; then
+  interactive || die "no repository: use -r"
+  known=()
+  while IFS= read -r line; do known+=("$line"); done < <(known_repos)
+  PS3="Repository: "
+  select repo in ${known[@]+"${known[@]}"} "another repository"; do [ -n "$repo" ] && break; done
+  if [ "$repo" = "another repository" ]; then read -r -p "Repository (owner/name or git URL): " repo; fi
+fi
+if [ -z "$chain" ] && [ "$have_prompt" = 0 ] && interactive; then read -r -p "Prompt (empty for none): " prompt; fi
+if [ -z "$branch" ]; then
+  if [ -n "$chain" ]; then branch=chain; else branch=$agent; fi
+  branch="$branch-$(date +%Y%m%d-%H%M%S)"
+fi
+
+# Everything except the prompt reaches a shell on the box, so each is checked here. The prompt travels base64.
+printf '%s\n' "${AGENTS[@]}" | grep -qx -- "$agent" || die "unknown agent: $agent (one of: ${AGENTS[*]})"
+[[ $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ || $repo =~ ^(https://|ssh://|file://|git@)[A-Za-z0-9@:/._~-]+$ ]] ||
+  die "not a repository: $repo (owner/name, or an https, ssh, file or git@ URL)"
+[[ $branch =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ && $branch != *..* && $branch != *.lock && $branch != */ ]] ||
+  die "not a branch name: $branch"
+[[ $prompt != -* ]] || die "the prompt must not start with -"
+# The model and effort reach the agent's command line, and the box's shell: plain characters only, no leading -.
+[[ -z $model || $model =~ ^[A-Za-z0-9][]A-Za-z0-9._:/@+=,[-]*$ ]] || die "not a model name: $model"
+case $agent in
+  claude | codex | gemini | cursor | opencode) ;;
+  *) [ -z "$model" ] || die "no model option for $agent" ;;
+esac
+if [ -n "$effort" ]; then
+  case $agent:$effort in
+    claude:low | claude:medium | claude:high | claude:xhigh | claude:max) ;;
+    codex:low | codex:medium | codex:high | codex:xhigh) ;;
+    *) die "no effort $effort for $agent (claude: low, medium, high, xhigh, max; codex: low, medium, high, xhigh)" ;;
+  esac
+  [ -z "$chain" ] || die "a chain has no effort option"
+fi
+# The pattern is matched on the box, inside the worktree: plain path characters and wildcards only.
+[[ -z $chain || ($chain =~ ^[A-Za-z0-9_.*?/-]+$ && $chain != /* && $chain != -* && $chain != *..*) ]] ||
+  die "not a file pattern in the repository: $chain"
+
+b64() { printf %s "$1" | base64 | tr -d '\n'; }
+# Each argument has a letter in front: ssh joins arguments with spaces, so an empty one would vanish. The prompt,
+# the pattern, the check, the chain script, the model and the effort travel base64 (the last two only when given).
+chain_args=()
+if [ -n "$chain" ]; then
+  chain_args=("g$(b64 "$chain")" "k$(b64 "$check")" "s$(base64 <"$(dirname "$0")/chain" | tr -d '\n')")
+fi
+[ -z "$model" ] || chain_args+=("m$(b64 "$model")")
+[ -z "$effort" ] || chain_args+=("e$(b64 "$effort")")
+"$SSH" "$HOST" bash -s -- "$agent" "$repo" "$branch" "p$(b64 "$prompt")" ${chain_args[@]+"${chain_args[@]}"} \
+  <"$(dirname "$0")/launch-remote.sh"
+if [ "$attach" = 1 ]; then
+  exec "$SSH" -t "$HOST" tmux attach -t agents
+fi
+echo "Attach: $SSH -t $HOST tmux attach -t agents"

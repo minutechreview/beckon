@@ -1,0 +1,9 @@
+# The maintainer reviews everything; these paths are listed so a review is always requested on them.
+*                       @jaystewartuk
+/.github/               @jaystewartuk
+/helper/internal/e2e/   @jaystewartuk
+/helper/internal/trust/ @jaystewartuk
+/helper/internal/pair/  @jaystewartuk
+/helper/internal/respond/ @jaystewartuk
+/web/install/           @jaystewartuk
+/SECURITY.md            @jaystewartuk

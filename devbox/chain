@@ -1,0 +1,316 @@
+#!/usr/bin/env bash
+# Runs prompt files one after another, each in a fresh Claude Code session, in the current directory: a plan of
+# milestones, worked through unattended. Run it under beckon so your phone hears when the chain needs you or ends:
+#
+#   beckon run -- beckon-chain [options] PROMPT_FILE...
+#
+#   --check CMD          after each stage, run CMD in a shell; the stage is done when it exits 0
+#   --retries N          when the check fails, show the agent the failure this many times before asking you (default 1)
+#   --from N             start at stage N (counting from 1), for example after a stop
+#   --permission-mode M  Claude Code's permission mode (default auto): nobody is there to answer its prompts
+#   --model M            Claude Code's model
+#   --rule               print the [[respond]] rule that gives the chain's questions buttons, and exit
+#
+# Each stage gets its prompt file and a note on working unattended: make the choices it can (one line each in
+# DECISIONS.md), and stop only for decisions that are yours, by writing .beckon-chain/question.md. The chain then
+# asks you, through Beckon and at the terminal, and resumes the same session with your answer. Answers: an empty
+# line ("Go on", from the phone or the keyboard) takes the agent's recommendation, or retries a failed check;
+# "skip" moves to the next stage; "stop" stops; anything else, typed at the terminal, goes to the agent. Logs
+# are in .beckon-chain/. Guide: docs/devbox.md
+#
+# The helper's release archive ships this file as beckon-chain, and install.sh puts it next to beckon, so the
+# command above works after a normal install. From a checkout of the repository, run devbox/chain instead. Its
+# [[respond]] rule is not added for you: run `beckon-chain --rule >> ~/.config/beckon/detectors.toml` once.
+set -euo pipefail
+
+STATE=.beckon-chain
+QUESTION=$STATE/question.md
+APP=beckon-chain
+
+die() { echo "devbox chain: $*" >&2; exit 2; }
+usage() { sed -n '/^#   beckon run/,/^# "stop"/p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+say() { printf 'chain: %s\n' "$*"; }
+
+rule() {
+  cat <<'RULE'
+# Buttons for beckon-chain's questions. To answer in your own words, type at the terminal.
+[[respond]]
+app = "beckon-chain"
+kind = "question"
+match_argv0 = ["beckon-chain", "chain"] # installed, and devbox/chain run from a checkout
+options = [
+  { id = "go", label = "Go on", keys = "\r", style = "primary" },
+  { id = "skip", label = "Skip stage", keys = "skip\r" },
+  { id = "stop", label = "Stop", keys = "stop\r", style = "danger" },
+]
+RULE
+}
+
+check="" retries=1 from=1 mode=auto model=""
+files=()
+while [ $# -gt 0 ]; do
+  case $1 in
+    --check) check=${2:?--check needs a command}; shift 2 ;;
+    --retries) retries=${2:?--retries needs a number}; shift 2 ;;
+    --from) from=${2:?--from needs a stage number}; shift 2 ;;
+    --permission-mode) mode=${2:?--permission-mode needs a mode}; shift 2 ;;
+    --model) model=${2:?--model needs a model}; shift 2 ;;
+    --rule) rule; exit 0 ;;
+    -h | --help) usage ;;
+    --) shift; files+=("$@"); break ;;
+    -*) usage 2 >&2 ;;
+    *) files+=("$1"); shift ;;
+  esac
+done
+n=${#files[@]}
+[ "$n" -gt 0 ] || usage 2 >&2
+[[ $retries =~ ^[0-9]+$ ]] || die "--retries must be a number"
+[[ $from =~ ^[1-9][0-9]*$ && $from -le $n ]] || die "--from must be a stage number from 1 to $n"
+for f in "${files[@]}"; do [ -f "$f" ] && [ -r "$f" ] || die "not a readable file: $f"; done
+command -v claude >/dev/null || die "claude is not installed"
+
+mkdir -p "$STATE"
+# Keep the chain's files out of the agent's commits.
+if exclude=$(git rev-parse --git-path info/exclude 2>/dev/null); then
+  mkdir -p "$(dirname "$exclude")"
+  grep -qx "/$STATE/" "$exclude" 2>/dev/null || echo "/$STATE/" >>"$exclude"
+fi
+
+# Reports go to the terminal beckon wraps. BECKON_CHAIN_OSC=1 sends them even when stdout is not a terminal (a
+# pipe through tee to one, say); 0 never sends them.
+report_ok=${BECKON_CHAIN_OSC:-}
+[ -n "$report_ok" ] || { [ -t 1 ] && report_ok=1 || report_ok=0; }
+b64() { printf %s "$1" | base64 | tr -d '\n'; }
+
+# fit MAXBYTES TEXT: TEXT on one line (control characters become spaces, runs of spaces one), cut on a character
+# boundary to at most MAXBYTES bytes of UTF-8, with "…" when cut.
+fit() {
+  local LC_ALL=C max=$1 s b
+  s=$(printf %s "$2" | tr '\000-\037\177' ' ' | tr -s ' ')
+  s=${s# }
+  s=${s% }
+  [ "${#s}" -le "$max" ] && { printf %s "$s"; return; }
+  s=${s:0:$((max - 3))} # bytes, in the C locale; "…" takes 3
+  # Drop the last character if the cut split it: its continuation bytes (0x80-0xBF), then its lead byte.
+  while [ -n "$s" ]; do
+    b=$(printf %d "'${s: -1}")
+    [ "$b" -lt 0 ] && b=$((b + 256))
+    [ "$b" -ge 128 ] && [ "$b" -lt 192 ] || break
+    s=${s%?}
+  done
+  if [ -n "$s" ]; then
+    b=$(printf %d "'${s: -1}")
+    [ "$b" -lt 0 ] && b=$((b + 256))
+    [ "$b" -lt 192 ] || s=${s%?}
+  fi
+  printf '%s…' "$s"
+}
+
+# record ID STATE TITLE MSG [KIND]: one OSC 7501 report (SPEC §5): the chain's card (ID "") or one stage's line
+# under it (ID stage-N). A title is at most 192 bytes and a message at most 2048, or Beckon drops the report.
+# The card carries no progress: stages differ in length, so a bar from finished stages sat at 0% for the whole
+# first stage and looked stuck. The stage lines and "Stage N/M" in the card's message say where the chain is.
+record() {
+  [ "$report_ok" = 1 ] || return 0
+  local body="state=$2:app=$APP"
+  [ -z "$1" ] || body="$body:id=$1"
+  body="$body:title=$(b64 "$(fit 190 "$3")"):msg=$(b64 "$(fit 2000 "$4")")"
+  [ -z "${5:-}" ] || body="$body:kind=$5"
+  printf '\033]7501;%s\033\\' "$body"
+}
+
+# report STATE KIND MSG: the chain's card in Beckon.
+report() { record "" "$1" "Chain: ${PWD##*/}" "$3" "$2"; }
+
+# stage_title FILE: a stage's name, from the prompt's first heading ("# Prompt 08 · UI stage 2 of 5: foundation"
+# gives "Foundation"), or else the file's name.
+stage_title() {
+  local h
+  h=$(sed -n 's/^#[[:space:]]\{1,\}//p' "$1" | head -n 1)
+  [ -n "$h" ] || { printf %s "${1##*/}"; return; }
+  h=${h##*: }
+  printf %s "$(printf %s "${h:0:1}" | tr 'a-z' 'A-Z')${h:1}"
+}
+
+# stage_line STATE MSG: this stage's line on the card.
+stage_line() { record "stage-$stage" "$1" "Stage $stage/$n: $(stage_title "$file")" "$2"; }
+
+minutes() {
+  local m=$((($(date +%s) - $1) / 60))
+  if [ "$m" -lt 60 ]; then printf '%d min' "$m"; else printf '%d h %d min' $((m / 60)) $((m % 60)); fi
+}
+
+# commits SINCE: commits on this branch since revision SINCE ("" outside git).
+commits() {
+  [ -n "$1" ] || return 0
+  local c
+  c=$(git rev-list --count "$1..HEAD" 2>/dev/null) || return 0
+  if [ "$c" = 1 ]; then printf '1 commit'; else printf '%s commits' "$c"; fi
+}
+head_rev() { git rev-parse -q --verify HEAD 2>/dev/null || true; }
+
+# summary LOG: what the agent said at the end of its last turn (the log after its last "===" line).
+summary() { awk '/^=== /{s=""; next} {s = s $0 "\n"} END{printf "%s", s}' "$1"; }
+
+# heartbeat START REV: while the agent works, the stage's line says how long it has run and what it committed,
+# so a stuck stage shows. Killed when the turn ends.
+heartbeat() {
+  while sleep "${BECKON_CHAIN_BEAT:-60}"; do
+    local c latest=""
+    c=$(commits "$2")
+    [ -z "$2" ] || latest=$(git log -1 --format=%s "$2..HEAD" 2>/dev/null || true)
+    stage_line working "Running for $(minutes "$1")${c:+ · $c}${latest:+ · latest: $latest}"
+  done
+}
+
+new_uuid() {
+  if [ -r /proc/sys/kernel/random/uuid ]; then cat /proc/sys/kernel/random/uuid; else uuidgen | tr 'A-Z' 'a-z'; fi
+}
+
+# agent LOG MESSAGE ARGS...: one turn of Claude Code, headless. The message goes in on stdin, so the agent never
+# reads the terminal (where answers arrive) and a message that starts with "-" is not taken for an option.
+agent() {
+  local log=$1 msg=$2
+  shift 2
+  printf '\n=== %s claude %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$log"
+  local -a args=(-p --permission-mode "$mode")
+  [ -z "$model" ] || args+=(--model "$model")
+  printf '%s' "$msg" | claude "${args[@]}" "$@" >>"$log" 2>&1
+}
+
+# ask QUESTION: blocks until an answer arrives, from a device or the keyboard, and sets $answer ("" = go on).
+ask() {
+  report blocked question "$1"
+  printf '\n'
+  say "$1"
+  say "answer: Enter to go on, skip, stop, or type an answer"
+  printf '> '
+  answer=""
+  IFS= read -r answer || answer=stop # the terminal is gone
+  answer=${answer//$'\e[200~'/}
+  answer=${answer//$'\e[201~'/}
+  answer=${answer%$'\r'}
+  case $(printf %s "$answer" | tr 'A-Z' 'a-z') in
+    skip) answer=skip ;;
+    stop) answer=stop ;;
+  esac
+  report working "" "Stage $stage/$n: ${file##*/}"
+}
+
+stop() {
+  stage_line error "Stopped by you after $(minutes "$stage_start")"
+  report error "" "Stopped at stage $stage/$n: ${file##*/}"
+  say "stopped at stage $stage/$n. Resume with --from $stage"
+  exit 1
+}
+
+policy() {
+  cat <<POLICY
+
+
+---
+(From devbox/chain.) You are stage $stage of $n in a chain of prompts that runs unattended: nobody is watching
+this session, and the end of your turn is what moves the chain on.
+- Don't stop to ask questions. Where this prompt and the repository leave a choice open, take the option you
+  would recommend, add one line to DECISIONS.md (the choice and why), and carry on.
+- Stop only for a decision that is the owner's to make: spending money, creating accounts or cloud resources,
+  anything irreversible or public (deploying, publishing, DNS, pushing to a shared branch), a change to the
+  security model, or a prompt that contradicts itself. Then write the question, the options and your
+  recommendation to $QUESTION, and end your turn. You will be resumed in this session with the answer.
+- When the stage is done (its "done when", if it has one), end your turn with a short summary.
+POLICY
+}
+
+# run_stage: one prompt file, in one Claude Code session, until it ends its turn with no question and the check
+# passes. Returns when the stage is done or skipped; stops the chain on "stop".
+run_stage() {
+  local sid log msg resume="" failures=0 out rc beat checked="" rev
+  sid=$(new_uuid)
+  log=$STATE/stage-$(printf %02d "$stage").log
+  msg="$(cat "$file")$(policy)"
+  rm -f "$QUESTION"
+  stage_start=$(date +%s)
+  rev=$(head_rev)
+  say "stage $stage/$n: $file (Claude Code session $sid, log $log)"
+  report working "" "Stage $stage/$n: $(stage_title "$file")"
+  stage_line working "Started at $(date -u '+%H:%M') UTC"
+  while :; do
+    heartbeat "$stage_start" "$rev" &
+    beat=$!
+    if [ -z "$resume" ]; then
+      agent "$log" "$msg" --session-id "$sid" && rc=0 || rc=$?
+    else
+      agent "$log" "$msg" --resume "$sid" && rc=0 || rc=$?
+    fi
+    kill "$beat" 2>/dev/null || true
+    wait "$beat" 2>/dev/null || true
+    resume=1
+    if [ "$rc" != 0 ]; then
+      ask "Stage $stage/$n: Claude Code exited with status $rc: $(tail -n 1 "$log")"
+      case $answer in
+        "") msg="Carry on with this stage from where you left off." ;;
+        skip) skipped; return 0 ;;
+        stop) stop ;;
+        *) msg=$answer ;;
+      esac
+      continue
+    fi
+    if [ -s "$QUESTION" ]; then
+      out=$(cat "$QUESTION")
+      rm -f "$QUESTION"
+      ask "Stage $stage/$n asks: $out"
+      case $answer in
+        "") msg="No answer from the owner: take the option you recommended, note it in DECISIONS.md, and carry on." ;;
+        skip) skipped; return 0 ;;
+        stop) stop ;;
+        *) msg="The owner's answer: $answer" ;;
+      esac
+      continue
+    fi
+    if [ -n "$check" ] && ! out=$(bash -c "$check" 2>&1 </dev/null); then
+      out=$(printf '%s\n' "$out" | tail -n 40)
+      failures=$((failures + 1))
+      if [ "$failures" -le "$retries" ]; then
+        say "stage $stage/$n: the check failed; sending the failure to the agent"
+        msg=$(printf 'The check `%s` failed:\n\n%s\n\nFix the cause, then end your turn.' "$check" "$out")
+        continue
+      fi
+      ask "Stage $stage/$n: the check failed: $(printf '%s\n' "$out" | tail -n 1)"
+      failures=0
+      case $answer in
+        "") msg=$(printf 'The check `%s` failed:\n\n%s\n\nFix the cause, then end your turn.' "$check" "$out") ;;
+        skip) skipped; return 0 ;;
+        stop) stop ;;
+        *) msg=$(printf 'The check `%s` failed:\n\n%s\n\nThe owner says: %s' "$check" "$out" "$answer") ;;
+      esac
+      continue
+    fi
+    [ -z "$check" ] || checked=" · check passed"
+    out=$(commits "$rev")
+    stage_line "done" "Done in $(minutes "$stage_start")${out:+ · $out}$checked. $(summary "$log")"
+    printf '%s %s\n' "$stage" "$file" >>"$STATE/done"
+    say "stage $stage/$n done"
+    return 0
+  done
+}
+
+# skipped: the owner skipped this stage.
+skipped() { stage_line "done" "Skipped by you after $(minutes "$stage_start")"; }
+
+[ -n "${BECKON_HOOK_SOCKET:-}" ] ||
+  say "not under 'beckon run' (or not logged in): nothing will reach your phone; answer here"
+# The card lists every stage still to run, so the phone shows the whole plan from the start.
+for ((stage = from; stage <= n; stage++)); do
+  file=${files[stage - 1]}
+  stage_line idle "Waiting"
+done
+chain_start=$(date +%s)
+chain_rev=$(head_rev)
+for ((stage = from; stage <= n; stage++)); do
+  file=${files[stage - 1]}
+  run_stage
+done
+stage=$((n + 1))
+total=$(commits "$chain_rev")
+report "done" "" "All $n stages done in ${PWD##*/} in $(minutes "$chain_start")${total:+ · $total}"
+say "all $n stages done"

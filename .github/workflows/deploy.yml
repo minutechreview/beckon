@@ -1,0 +1,41 @@
+# Production deploys itself: deploy/vm/autodeploy.sh on the VM pulls main once this repository's ci workflow has
+# passed on it. This workflow holds no secrets and cannot reach the server. It waits for https://beckoncli.com/healthz
+# to report the commit that just passed CI, and fails if that has not happened within 30 minutes, so a failed deploy
+# shows up here (and in GitHub's failed-run email). Logs on the VM: journalctl -t beckon-autodeploy.
+name: deploy
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+
+jobs:
+  production:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment:
+      name: production
+      url: https://beckoncli.com
+    steps:
+      - name: Wait for beckoncli.com to run this commit
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          for _ in $(seq 1 60); do
+            live=$(curl -fsS -m 10 https://beckoncli.com/healthz | jq -r '.revision // empty' || true)
+            if [ "$live" = "$SHA" ]; then echo "live: $SHA"; exit 0; fi
+            tip=$(git ls-remote "https://github.com/$REPO.git" refs/heads/main | cut -f1)
+            if [ -n "$tip" ] && [ "$tip" != "$SHA" ]; then echo "main has moved on to $tip; its own run checks the deploy"; exit 0; fi
+            sleep 30
+          done
+          echo "::error::production runs ${live:-an unknown commit}, not $SHA, after 30 minutes. On the VM: journalctl -t beckon-autodeploy"
+          exit 1

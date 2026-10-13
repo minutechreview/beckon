@@ -1,0 +1,276 @@
+# Built-in heuristic detectors (SPEC §7.2), compiled into the binary.
+#
+# Each runs only for sessions whose command matches `match_argv0`, matches
+# `blocked_pattern` against the rendered visible terminal screen, and fires once
+# the matched text has stayed unchanged for `idle_ms`. A same-named [[detector]]
+# in ~/.config/beckon/detectors.toml replaces the entry here.
+#
+# Default options for permission prompts are one-time Approve and Deny only.
+# Never add an option that widens permissions ("always allow", "don't ask
+# again", "switch to auto mode"). A question's options are its answers.
+#
+# A program may have several entries, one per kind of prompt, told apart by
+# `name` (default: the app). The first whose pattern matches the screen wins.
+
+# Claude Code permission prompts. Rechecked against 2.1.296 on 2026-10-11 (the
+# Bash prompt, under --no-query-reply). Verified against claude-code 2.1.295 on
+# 2026-10-09 with the Bash tool ("Do you want to proceed?") and the Write tool
+# ("Do you want to create ...?"). Both render as
+#
+#   Do you want to ...?
+#   ❯ 1. Yes
+#     2. Yes, and ...        (options vary: 2-3 more lines)
+#     N. No
+#
+#   Esc to cancel · Tab to amend
+#
+# Keys, tested on that version: "1" alone approves once (no Enter); a lone Esc
+# denies (the tool call is rejected and the turn is interrupted).
+# In auto mode, a prompt forced by an ask rule (claude-code 2.1.296, 2026-10-11)
+# has two more lines between the command and the question ("Ask rule ...
+# overrides auto mode", "/permissions to let auto mode decide") and a blank line;
+# up to four such lines are allowed there.
+# Group 1 is the command or file contents between the dashed rules, group 2 the
+# question.
+[[detector]]
+app = "claude-code"
+match_argv0 = ["claude"]
+blocked_pattern = '''(?m)^─{20,}\n(?:[^\n╌][^\n]*\n){0,6}?(?:╌{3,}\n((?:[^\n]*\n)*?)╌{3,}\n)?(?:(?:[^\n╌][^\n]*)?\n){0,4}? *(Do you want to [^\n]{1,200}\?)\n *❯ 1\. Yes\n(?:[^\n]*\n){0,8}? *\d\. No *\n(?: *\n)* *Esc to cancel[^\n]*\z'''
+kind = "permission"
+msg_capture = "groups:2,1"
+idle_ms = 1000
+tested_versions = ["claude-code 2.1.295", "claude-code 2.1.296"]
+verified = true
+options = [
+  { id = "approve", label = "Approve", keys = "1", style = "primary" },
+  { id = "deny", label = "Deny", keys = "\u001b", style = "danger" },
+]
+
+# Claude Code questions (the AskUserQuestion tool). Verified against
+# claude-code 2.1.296 on 2026-10-11 with one question and with a form of two.
+# A single-select question renders as
+#
+#   ────────────────────────────────────
+#    ☐ Database                     (a form of several: "←  ☐ Database  ☐ Cache  ✔ Submit  →")
+#
+#   Which database should we use?
+#
+#   ❯ 1. Postgres
+#        Relational server
+#     2. SQLite
+#        Embedded file
+#     3. Type something.
+#   ────────────────────────────────────
+#     4. Chat about this
+#
+#   Enter to select · ↑/↓ to navigate · Esc to cancel
+#
+# The options are not fixed: they are the menu on screen (see `menu`). A
+# digit alone picks that answer (no Enter); in a form, the next question
+# follows. "Type something." is not offered: its digit opens a text field,
+# and Beckon never types text. Answer in your own words at the terminal.
+# The pattern requires the cursor on answer 1 (so no text field has focus and
+# a digit is not typed into one), "Type something." as the last answer and the
+# footer. Multi-select questions ("1. [ ] Auth") and permission prompts never
+# match. Group 1 is the question, group 2 the menu (without "Type something.").
+[[detector]]
+name = "claude-code-question"
+app = "claude-code"
+match_argv0 = ["claude"]
+blocked_pattern = '''(?m)^─{20,}\n(?: [☐☒] [^\n]*|←  [^\n]*✔ Submit  →)\n\n((?:[^\n]+\n)+?)\n(❯ 1\. [^\[\n][^\n]*\n(?:(?: {5}[^\n]*|  [2-9]\. [^\[\n][^\n]*)\n){0,30}?)  [2-9]\. Type something\.\n─{20,}\n  [2-9]\. Chat about this\n\nEnter to select · (?:↑/↓|Tab/Arrow keys) to navigate · Esc to cancel\z'''
+kind = "question"
+msg_capture = "groups:1"
+idle_ms = 1000
+menu = { group = 2, item = '(?m)^(?:❯| ) ([1-9])\. ([^\n]+)$' }
+tested_versions = ["claude-code 2.1.296"]
+verified = true
+
+# The last step of a Claude Code form of several questions, verified against
+# claude-code 2.1.296 on 2026-10-11:
+#
+#   ←  ☒ Database  ☒ Cache  ✔ Submit  →
+#
+#   Review your answers
+#
+#    ● Which database should we use?
+#      → Neon Postgres
+#    ...
+#
+#   Ready to submit your answers?
+#
+#   ❯ 1. Submit answers
+#     2. Cancel
+#
+# "1" submits the answers; "2" cancels the form (Claude Code tells the model
+# the user declined to answer). Group 1 is the answers, group 2 the question.
+[[detector]]
+name = "claude-code-submit"
+app = "claude-code"
+match_argv0 = ["claude"]
+blocked_pattern = '''(?m)^─{20,}\n←  [^\n]*✔ Submit  →\n\nReview your answers\n\n((?:[^\n]*\n){1,40}?)\n(Ready to submit your answers\?)\n\n❯ 1\. Submit answers\n  2\. Cancel\z'''
+kind = "question"
+msg_capture = "groups:2,1"
+idle_ms = 1000
+tested_versions = ["claude-code 2.1.296"]
+verified = true
+options = [
+  { id = "submit", label = "Submit answers", keys = "1", style = "primary" },
+  { id = "cancel", label = "Cancel", keys = "2", style = "danger" },
+]
+
+# OpenAI Codex CLI approval overlay, for commands ("Would you like to run the
+# following command?") and file edits ("Would you like to make the following
+# edits?"). Verified against codex-cli 0.162.0 on 2026-10-11: both show
+#
+#   Would you like to ...?
+#   ...                       (reason, environment or destination, the command)
+#   › 1. Yes, proceed (y)
+#     2. Yes, and don't ask again for ... (p or a)
+#     3. No, and tell Codex what to do differently (esc)
+#
+#     Press enter to confirm or esc to cancel
+#
+# "y" alone approves once; a lone Esc denies (the edit is not applied and the
+# turn is interrupted). Deliberately require both exact one-time choice labels
+# and the footer: persistent grants and other approval types must not be
+# answered through this detector.
+[[detector]]
+app = "codex"
+match_argv0 = ["codex"]
+blocked_pattern = '''(?ms)^ *Would you like to (?:run the following command|make the following edits)\?\n(?s:.*?)^ *[›]? *\d+\. Yes, proceed \(y\)[ \t]*\n(?s:.*?)^ *\d+\. No, and tell Codex what to do differently \(esc\)[ \t]*\n(?s:.*?)^ *Press enter to confirm or esc to cancel[ \t]*\z'''
+kind = "permission"
+msg_capture = "match"
+idle_ms = 1000
+tested_versions = ["codex-cli 0.162.0"]
+verified = true
+options = [
+  { id = "approve", label = "Approve", keys = "y", style = "primary" },
+  { id = "deny", label = "Deny", keys = "\u001b", style = "danger" },
+]
+
+# OpenCode permission prompt (bash, edit and other tools set to "ask").
+# Verified against opencode 1.19.0 on 2026-10-11 with a shell command and a
+# file edit. Both render, at the left edge of the session pane, as
+#
+#   ┃  △ Permission required
+#   ┃    # Shell command          (or "→ Edit notes.txt")
+#   ┃
+#   ┃  $ touch marker.txt         (or the diff)
+#   ┃
+#   ┃   Allow once   Allow always   Reject     ctrl+f fullscreen  ⇆ select  enter confirm
+#
+# The choices are a picker that starts on "Allow once" for every prompt, so
+# Enter approves once; Esc rejects. Enter is only safe while nobody has moved
+# the selection, which the local-input rule guarantees: a response is refused
+# once anyone has typed at the prompt. Require the exact three choices, so a
+# prompt with other options is never answered. Group 1 is the tool line,
+# group 2 the first line of the command or diff.
+[[detector]]
+app = "opencode"
+match_argv0 = ["opencode"]
+blocked_pattern = '''(?m)^ *┃ +△ Permission required[ \t]*\n *┃ +([^\n]*\S)[ \t]*\n(?: *┃[ \t]*\n)*? *┃ +([^\n]*\S)[ \t]*\n(?: *┃[^\n]*\n){0,40}? *┃ +Allow once {2,}Allow always {2,}Reject(?: {2,}[^\n]*)?\n *┃[ \t]*\z'''
+kind = "permission"
+msg_capture = "groups:1,2"
+idle_ms = 1000
+tested_versions = ["opencode 1.19.0"]
+verified = true
+options = [
+  { id = "approve", label = "Approve", keys = "\r", style = "primary" },
+  { id = "deny", label = "Deny", keys = "\u001b", style = "danger" },
+]
+
+# GitHub Copilot CLI permission dialog. Verified against Copilot CLI 1.0.95 on
+# 2026-10-11 with a shell command ("Do you want to run this command?") and a
+# file creation ("Do you want to create <path>?", which may wrap). Both render
+# as a framed box:
+#
+#   │ <title>                                             │
+#   │ ─────────────────────────────────────────────────── │
+#   │ ... the command or the diff ...                     │
+#   │ Do you want to ...?                                 │
+#   │                                                     │
+#   │ ❯ 1. Yes                                            │
+#   │   2. Yes, and don't ask again for ...               │
+#   │   3. No, and tell Copilot what to do differently (Esc to stop) │
+#   │                                                     │
+#   │ ↑/↓ to navigate · enter to select · esc to cancel   │
+#
+# "1" alone approves once (no Enter); Esc denies and stops the turn. The folder
+# trust dialog has different choices and never matches. Group 1 is the
+# question, group 2 the command or diff.
+[[detector]]
+app = "copilot"
+match_argv0 = ["copilot"]
+blocked_pattern = '''(?m)^│ [^\n│]*\S *│\n│ ─+ │\n((?:│[^\n]*│\n){0,60}?)│ (Do you want to [^\n]*?(?: *│\n│ [^\n]*?){0,3}\?) *│\n│ *│\n│ ❯ 1\. Yes *│\n│   2\. Yes, and don't ask again [^\n]*│\n│   3\. No, and tell Copilot what to do differently \(Esc to stop\) *│\n│ *│\n│ ↑/↓ to navigate · enter to select · esc to cancel *│\n╰─+╯\z'''
+kind = "permission"
+msg_capture = "groups:2,1"
+idle_ms = 1000
+tested_versions = ["copilot 1.0.95"]
+verified = true
+options = [
+  { id = "approve", label = "Approve", keys = "1", style = "primary" },
+  { id = "deny", label = "Deny", keys = "\u001b", style = "danger" },
+]
+
+# Gemini CLI tool confirmation. Verified against Gemini CLI 0.63.0 on
+# 2026-10-11 with a shell command ("Allow execution of [Shell]?") and a file
+# write ("Apply this change?"). Both render as a framed box at the bottom:
+#
+#   │ ? Shell  touch marker8.txt          (or "? WriteFile  Writing to notes8.txt")
+#   │ ... the command or the diff, in an inner box ...
+#   │ Allow execution of [Shell]?          (or "Apply this change?")
+#   │
+#   │ ● 1. Allow once
+#   │   2. Allow for this session
+#   │   3. Modify with external editor     (file writes only)
+#   │   N. No, suggest changes (esc)
+#   ╰──────────────────────────────────────╯
+#
+#     Action Required (proj)
+#
+# "1" alone approves once (no Enter); Esc rejects and cancels the request.
+# Group 1 is the tool line, group 2 the question.
+[[detector]]
+app = "gemini"
+match_argv0 = ["gemini"]
+blocked_pattern = '''(?m)^│ \? ([^\n│]*\S) *│\n(?:│[^\n]*│\n){0,60}?│ (Allow execution of [^\n│]*?\?|Apply this change\?) *│\n│ *│\n│ ● 1\. Allow once *│\n│   2\. Allow for this session *│\n(?:│   \d\. [^\n]*│\n){0,3}?│   \d\. No, suggest changes \(esc\) *│\n╰─+╯(?:\n *)*(?:\n *Action Required[^\n]*)?\z'''
+kind = "permission"
+msg_capture = "groups:2,1"
+idle_ms = 1000
+tested_versions = ["gemini-cli 0.63.0"]
+verified = true
+options = [
+  { id = "approve", label = "Approve", keys = "1", style = "primary" },
+  { id = "deny", label = "Deny", keys = "\u001b", style = "danger" },
+]
+
+# Cursor CLI (cursor-agent, also installed as `agent`) shell command approval.
+# Verified against cursor-agent 2026.10.01-e373342 on 2026-10-11. File edits
+# are applied without asking; shell commands outside the allowlist show
+#
+#    $  touch marker4.txt in .
+#    Run this command?
+#    Not in allowlist: touch
+#     → Run (once) (y)
+#       Add Shell(touch) to allowlist? (tab)
+#       Run Everything (shift+tab)
+#       Skip & tell the agent what to do instead (esc or n)
+#
+# "y" alone runs it once. Esc and "n" only open a box asking what to do
+# instead, with the command still pending, so Deny sends Ctrl+C: the command
+# is rejected and the turn ends (Cursor keeps running). The pattern requires
+# the selection arrow on "Run (once)" and the exact four choices. Group 1 is
+# the command's first line.
+[[detector]]
+app = "cursor"
+match_argv0 = ["cursor-agent", "agent"]
+blocked_pattern = '''(?m)^ \$ +([^\n]*\S)[ \t]*\n(?:[^\n]*\n){0,10}? (Run this command\?)\n(?: [^\n]*\n){0,3}? +→ Run \(once\) \(y\)\n +Add [^\n]* to allowlist\? \(tab\)\n +Run Everything \(shift\+tab\)\n +Skip & tell the agent what to do instead \(esc or n\)[ \t]*\z'''
+kind = "permission"
+msg_capture = "groups:2,1"
+idle_ms = 1000
+tested_versions = ["cursor-agent 2026.10.01-e373342"]
+verified = true
+options = [
+  { id = "approve", label = "Approve", keys = "y", style = "primary" },
+  { id = "deny", label = "Deny", keys = "\u0003", style = "danger" },
+]

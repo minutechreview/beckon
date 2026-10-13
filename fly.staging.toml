@@ -1,0 +1,52 @@
+# Staging: Stripe TEST mode, a staging subdomain. Deploy with:  fly deploy -c fly.staging.toml
+# Nothing here creates resources; the app, database and secrets are created by hand (docs/deploy.md).
+app = "beckon-staging"
+primary_region = "lhr"
+kill_signal = "SIGTERM"
+kill_timeout = 15
+
+[build]
+  dockerfile = "Dockerfile"
+
+[deploy]
+  # Runs on a temporary machine with the app's secrets before any new machine starts. A failed
+  # migration stops the deploy and leaves the running version untouched.
+  release_command = "node dist/migrate.mjs"
+  # Start the new machine and wait for /healthz before stopping the old one: helpers see one
+  # going-away close (1001) and reconnect to the new machine within about a second.
+  strategy = "bluegreen"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+  AUTH_URL = "https://staging.beckoncli.com"
+  BECKON_PUBLIC_URL = "https://staging.beckoncli.com"
+  EMAIL_FROM = "Beckon (staging) <login@beckoncli.com>"
+  VAPID_SUBJECT = "mailto:admin@beckoncli.com"
+  # BECKON_PLAINTEXT_DEV, BECKON_DEV_LOGIN, BECKON_RATE_LIMIT_OFF and BECKON_PUSH_ALLOW_LOCAL_ENDPOINTS
+  # must never be set: the server refuses to start with any of them in production.
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  # Stopped machines drop every WebSocket and push nothing: keep one machine running, always.
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 400
+    hard_limit = 600
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/healthz"
+    interval = "15s"
+    timeout = "3s"
+    grace_period = "20s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

@@ -1,0 +1,20 @@
+Beckon
+Copyright (c) 2026 Jay Stewart and Beckon contributors
+
+This repository uses two licences:
+
+  helper/            The `beckon` command-line helper (Go). MIT License, see helper/LICENSE.
+  testdata/crypto/   Crypto interop vectors shared by the helper and the server. MIT License,
+                     see helper/LICENSE.
+  devbox/            The script that sets up a server to run agents. MIT License, see
+                     helper/LICENSE: you copy, edit and run it on your own machines.
+
+  Everything else    The server, web app, deployment files and documentation.
+                     GNU Affero General Public License v3.0 only, see LICENSE.
+
+Why the split: the helper runs on your machine and is the security boundary (it decides what is
+encrypted and whether a remote answer may type into your terminal), so it is permissive and easy
+to audit, vendor or embed. The server is AGPL: you may run, modify and self-host it, and if you
+offer a modified version to others over a network, you must offer them its source too.
+
+The hosted service at https://beckoncli.com is run by the project and funds its development.

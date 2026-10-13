@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# The sandbox's entry point (devbox/local). It runs as the user dev, with the repository's copy in /work.
+#
+#   devbox-start shell                    a login shell
+#   devbox-start seed NAME                make /work a repository on branch NAME from a git bundle on stdin
+#   devbox-start chain NAME [OPTIONS] -- GLOB
+#                                         run the prompt files in /work matching GLOB as a chain, under beckon
+#   devbox-start export NAME BASE         write a git bundle of branch NAME's commits after BASE to stdout
+set -euo pipefail
+die() { echo "devbox sandbox: $*" >&2; exit 2; }
+
+# The chain's [[respond]] rule (buttons for its questions; once per home volume) and Beckon's Claude Code hooks.
+prepare() {
+  local dir=${XDG_CONFIG_HOME:-$HOME/.config}/beckon
+  if ! grep -Eqs '^[[:space:]]*app[[:space:]]*=[[:space:]]*"beckon-chain"' "$dir/detectors.toml"; then
+    mkdir -p "$dir"
+    { [ ! -s "$dir/detectors.toml" ] || echo; beckon-chain --rule; } >>"$dir/detectors.toml"
+    chmod 600 "$dir/detectors.toml"
+  fi
+  # Every start: setup adds only hooks that are missing, so a newer helper's hooks reach an older home volume.
+  beckon setup --agent claude --yes >/dev/null 2>&1 || true
+}
+
+cmd=${1:-shell}
+[ $# -eq 0 ] || shift
+case $cmd in
+  shell)
+    prepare
+    exec bash -l
+    ;;
+  seed)
+    name=${1:?seed needs a branch name}
+    [ -z "$(ls -A /work)" ] || die "/work is not empty"
+    cat >/tmp/base.bundle
+    git init -q -b "$name" /work
+    git -C /work fetch -q /tmp/base.bundle HEAD
+    git -C /work reset -q --hard FETCH_HEAD
+    rm /tmp/base.bundle
+    ;;
+  chain)
+    name=${1:?chain needs a branch name}
+    shift
+    opts=()
+    while [ $# -gt 0 ] && [ "$1" != -- ]; do opts+=("$1"); shift; done
+    [ $# -eq 2 ] || die "chain needs -- and one pattern"
+    glob=$2
+    prepare
+    # The chain names its card after the directory: <repo>-<branch>, as on the devbox, not "work".
+    dir=/tmp/${DEVBOX_LABEL:-$name}
+    ln -sfn /work "$dir"
+    cd "$dir"
+    files=()
+    shopt -s nullglob
+    # shellcheck disable=SC2086 # the pattern is meant to expand
+    for f in $glob; do [ -f "$f" ] && files+=("$f"); done
+    [ ${#files[@]} -gt 0 ] || die "no files match $glob in the repository"
+    run=(beckon run)
+    # The branch names the session in Beckon (an older helper has no --name: it shows folder and branch instead).
+    if beckon help 2>/dev/null | grep -q -- '--name LABEL'; then run+=(--name "$name"); fi
+    exec "${run[@]}" -- beckon-chain "${opts[@]}" -- "${files[@]}"
+    ;;
+  export)
+    name=${1:?export needs a branch name}
+    base=${2:?export needs the base commit}
+    exec git -C /work bundle create -q - "^$base" "refs/heads/$name"
+    ;;
+  *)
+    die "unknown command: $cmd"
+    ;;
+esac

@@ -1,0 +1,9 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "beckon hook --app claude-code" }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "beckon hook --app claude-code --ask", "timeout": 86400 }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "beckon hook --app claude-code" }] }],
+    "Notification": [{ "hooks": [{ "type": "command", "command": "beckon hook --app claude-code" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "beckon hook --app claude-code" }] }]
+  }
+}

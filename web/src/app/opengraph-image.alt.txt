@@ -1,0 +1,1 @@
+Beckon: a phone inbox showing claude-code blocked on a permission prompt for rm -rf build/, with Approve and Deny buttons

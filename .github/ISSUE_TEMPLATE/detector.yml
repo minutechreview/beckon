@@ -1,0 +1,29 @@
+name: Agent or detector support
+description: Ask for (or contribute) prompt detection or OSC 7501 support for a terminal agent.
+labels: [detector]
+body:
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and version
+      placeholder: e.g. some-agent 1.2.3
+    validations:
+      required: true
+  - type: dropdown
+    id: osc
+    attributes:
+      label: Does it emit OSC 7501 itself?
+      options: ["No", "Yes", "Not sure"]
+  - type: textarea
+    id: prompt
+    attributes:
+      label: The prompt
+      description: Paste the permission or question prompt as it appears on screen, and the keys that answer it.
+      render: text
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        A fixture makes this much easier to fix: `beckon capture --out agent.cap -- <cmd>`, trigger the prompt, then attach the file.
+        Check it for anything personal first (paths, hostnames, tokens).

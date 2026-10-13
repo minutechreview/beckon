@@ -1,0 +1,248 @@
+#!/usr/bin/env bash
+# Runs devbox/chain and Claude Code on your own computer, inside a Docker container that holds nothing of yours:
+# a copy of the repository's committed files, the sandbox's own sign-ins, none of your files, and a network that
+# reaches only the domains you allow. The safer way to leave a chain running on a laptop. Guide: docs/devbox.md
+#
+#   devbox/local setup                    build the images, then open a shell to sign in (the first time)
+#   devbox/local chain GLOB [--check CMD] [-b NAME] [--from N] [--retries N] [--model M]
+#                                         run this repository's prompt files matching GLOB as a chain
+#   devbox/local attach NAME              answer a chain in your own words (detach: ctrl-p ctrl-q)
+#   devbox/local logs NAME                what the chain printed
+#   devbox/local fetch NAME               copy the chain's branch into the repository it came from
+#   devbox/local shell [NAME]             a shell in the sandbox; with NAME, in that chain's copy of the repository
+#   devbox/local list                     the chains, and whether each is running
+#   devbox/local rm NAME                  delete a chain's container and its copy of the repository
+#   devbox/local build                    rebuild the images: the latest Claude Code and helper
+#   devbox/local reset                    delete the sandbox's sign-ins
+#
+#   GLOB          prompt files in the repository, for example 'docs/prompts/*.md' (quote it)
+#   --check CMD   a command that must pass before the next stage starts, for example 'make test'
+#   -b NAME       the chain's branch, and its name here (default chain-<date>-<time>). An existing NAME picks up
+#                 where it stopped, in the same copy: add --from with the stage to start at
+#
+# The chain starts from your last commit (HEAD); uncommitted changes stay out. The domains the sandbox may reach
+# are in ~/.config/beckon-devbox/allow, made on first use: add your package registries there.
+# Environment: BECKON_SERVER (default https://beckoncli.com), DEVBOX_APT (extra Ubuntu packages for the image).
+set -euo pipefail
+DIR=$(cd "$(dirname "$0")" && pwd)
+NS=${DEVBOX_LOCAL_NS:-beckon-devbox} # names the images, network, proxy, home volume and chains (tests change it)
+IMAGE=${DEVBOX_LOCAL_IMAGE:-$NS}     # the sandbox image (tests put a fake claude in one)
+PROXY=$NS-proxy
+HOME_VOL=$NS-home
+SERVER=${BECKON_SERVER:-https://beckoncli.com}
+CONF=${XDG_CONFIG_HOME:-$HOME/.config}/beckon-devbox
+
+die() { echo "devbox local: $*" >&2; exit 1; }
+usage() { sed -n '/^#   devbox\/local setup/,/^# Environment/p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+exists() { docker "$1" inspect "$2" >/dev/null 2>&1; }
+running() { [ "$(docker container inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = true ]; }
+label() { docker volume inspect -f "{{index .Labels \"beckon.$2\"}}" "$NS-$1"; }
+check_name() {
+  [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$ ]] || die "bad name: $1 (letters, digits, . _ -)"
+  case $1 in proxy | home) die "$1 is reserved: pick another name" ;; esac
+}
+chain_vol() { check_name "$1"; exists volume "$NS-$1" || die "no chain named $1 (devbox/local list)"; }
+
+command -v docker >/dev/null || die "Docker is not installed"
+docker info >/dev/null 2>&1 || die "Docker is not running"
+
+build() {
+  docker build -q -t "$IMAGE" -f "$DIR/local-image/Dockerfile" --build-arg "BECKON_URL=$SERVER" \
+    --build-arg "EXTRA_APT=${DEVBOX_APT:-}" --build-arg "UPDATED=$(date +%s)" "$DIR" >/dev/null
+  docker build -q -t "$NS-proxy" -f "$DIR/local-image/proxy.Dockerfile" "$DIR" >/dev/null
+}
+images() {
+  exists image "$IMAGE" && exists image "$NS-proxy" && return
+  echo "Building the sandbox images (a few minutes, the first time)..."
+  build
+}
+
+# The allowed domains: the file, made with these defaults on first use, plus the Beckon server.
+allowed() {
+  if [ ! -e "$CONF/allow" ]; then
+    mkdir -p "$CONF"
+    cat >"$CONF/allow" <<'ALLOW'
+# Domains the devbox/local sandbox may reach over HTTPS, one per line. Each also allows its subdomains.
+# Every domain here is somewhere an agent could send data, so add only what your projects need.
+# The Beckon server (BECKON_SERVER) is always allowed. Changes apply to the next devbox/local command.
+anthropic.com
+claude.ai
+claude.com
+github.com
+githubusercontent.com
+registry.npmjs.org
+pypi.org
+files.pythonhosted.org
+proxy.golang.org
+sum.golang.org
+crates.io
+ALLOW
+    echo "Made $CONF/allow: the domains the sandbox may reach." >&2
+  fi
+  local host=${SERVER#*://}
+  host=${host%%[/:]*}
+  { sed 's/#.*//' "$CONF/allow"; echo "$host"; } | tr -s ' \t' '\n\n' | sed 's/^\*\.//' | grep . | sort -u | tr '\n' ' '
+}
+
+# The internal network (no route out, no DNS) and the proxy that is its only way out, rebuilt when the list changes.
+network() {
+  images
+  exists network "$NS" || docker network create --internal "$NS" >/dev/null
+  local allow sum d
+  allow=$(allowed)
+  for d in $allow; do [[ $d =~ ^[A-Za-z0-9.-]+$ ]] || die "bad domain in $CONF/allow: $d"; done
+  sum=$(printf %s "$allow" | cksum | cut -d' ' -f1)
+  if running "$PROXY" && [ "$(docker container inspect -f '{{index .Config.Labels "beckon.allow"}}' "$PROXY")" = "$sum" ]; then
+    return
+  fi
+  docker rm -f "$PROXY" >/dev/null 2>&1 || true
+  docker run -d --name "$PROXY" --restart unless-stopped --label "beckon.allow=$sum" -e "ALLOW=$allow" \
+    --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp "$NS-proxy" >/dev/null
+  docker network connect "$NS" "$PROXY"
+}
+
+# How every sandbox container runs: no capabilities, no new privileges, only the internal network.
+sandbox=()
+sandbox_args() {
+  local proxy="http://$PROXY:8888" name email
+  name=$(git config user.name 2>/dev/null || echo "Beckon chain")
+  email=$(git config user.email 2>/dev/null || echo "chain@beckon.invalid")
+  sandbox=(--init --network "$NS" --hostname "sandbox-$(hostname -s 2>/dev/null || echo local)"
+    --cap-drop ALL --security-opt no-new-privileges --pids-limit 4096
+    -e "HTTPS_PROXY=$proxy" -e "HTTP_PROXY=$proxy" -e "https_proxy=$proxy" -e "http_proxy=$proxy"
+    -e "NO_PROXY=localhost,127.0.0.1" -e "no_proxy=localhost,127.0.0.1" -e "BECKON_SERVER=$SERVER"
+    -e "GIT_AUTHOR_NAME=$name" -e "GIT_AUTHOR_EMAIL=$email" -e "GIT_COMMITTER_NAME=$name" -e "GIT_COMMITTER_EMAIL=$email"
+    -v "$HOME_VOL:/home/dev")
+}
+# A container with no network at all, for copying the repository in and out.
+offline() { docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges "$@"; }
+
+cmd_chain() {
+  local glob="" name="" opts=() top base vol ctr
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --check | --from | --retries | --model) opts+=("$1" "${2:?$1 needs a value}"); shift 2 ;;
+      -b) name=${2:?-b needs a name}; shift 2 ;;
+      -h | --help) usage ;;
+      -*) usage 2 >&2 ;;
+      *) [ -z "$glob" ] || die "one pattern only: quote it"; glob=$1; shift ;;
+    esac
+  done
+  [ -n "$glob" ] || usage 2 >&2
+  top=$(git rev-parse --show-toplevel 2>/dev/null) || die "run it inside the repository the prompts are in"
+  name=${name:-chain-$(date +%Y%m%d-%H%M%S)}
+  check_name "$name"
+  vol=$NS-$name ctr=$NS-$name
+  running "$ctr" && die "$name is running: devbox/local attach $name"
+  network
+  sandbox_args
+  if exists volume "$vol"; then
+    echo "Picking up $name in its existing copy of the repository."
+  else
+    base=$(git -C "$top" rev-parse -q --verify HEAD) || die "the repository has no commits"
+    [ -z "$(git -C "$top" status --porcelain)" ] || echo "Uncommitted changes stay out: the chain starts from HEAD (${base:0:12})."
+    docker volume create --label "beckon.chain=$name" --label "beckon.repo=$top" --label "beckon.base=$base" "$vol" >/dev/null
+    git -C "$top" bundle create -q - HEAD | offline -i -v "$vol:/work" "$IMAGE" seed "$name" ||
+      { docker volume rm "$vol" >/dev/null; die "could not copy the repository into the sandbox"; }
+  fi
+  docker rm "$ctr" >/dev/null 2>&1 || true
+  docker run -d -it --name "$ctr" --label "beckon.chain=$name" "${sandbox[@]}" -v "$vol:/work" -w /work \
+    -e "DEVBOX_LABEL=$(basename "$(label "$name" repo)")-$name" \
+    "$IMAGE" chain "$name" ${opts[@]+"${opts[@]}"} -- "$glob" >/dev/null
+  # A Mac that sleeps pauses Docker, and the chain with it: keep it awake until the chain ends (the lid still wins).
+  if command -v caffeinate >/dev/null; then
+    nohup caffeinate -i docker wait "$ctr" >/dev/null 2>&1 &
+  fi
+  cat <<EOF
+Started chain $name from $(basename "$top") in a sandbox. Your phone hears when it needs you.
+  devbox/local attach $name    answer in your own words (detach: ctrl-p ctrl-q; ctrl-c stops the chain)
+  devbox/local logs $name      what it printed
+  devbox/local fetch $name     when it's done: copy branch $name into $top to review it
+EOF
+}
+
+cmd_fetch() {
+  local name=${1:?fetch needs a chain name} repo base tmp
+  chain_vol "$name"
+  repo=$(label "$name" repo) base=$(label "$name" base)
+  git -C "$repo" rev-parse -q --verify "$base^{commit}" >/dev/null || die "$repo no longer has the chain's starting commit ${base:0:12}"
+  tmp=$(mktemp -d)
+  # shellcheck disable=SC2064 # expanded now: tmp is local
+  trap "rm -rf '$tmp'" EXIT
+  # A bundle is only commits and a branch: nothing in it runs on your computer, unlike the copy's own .git.
+  offline -v "$NS-$name:/work:ro" "$IMAGE" export "$name" "$base" >"$tmp/chain.bundle" ||
+    die "nothing to fetch: the chain has made no commits yet"
+  git -C "$repo" fetch -q "$tmp/chain.bundle" "+refs/heads/$name:refs/heads/$name"
+  echo "Branch $name in $repo: $(git -C "$repo" rev-list --count "$base..$name") commits. Review it with: git log -p $base..$name"
+}
+
+cmd_shell() {
+  network
+  sandbox_args
+  local work=()
+  if [ $# -gt 0 ]; then
+    chain_vol "$1"
+    work=(-v "$NS-$1:/work" -w /work)
+  fi
+  docker run --rm -it "${sandbox[@]}" ${work[@]+"${work[@]}"} "$IMAGE" shell
+}
+
+cmd_list() {
+  local v name status code
+  for v in $(docker volume ls -q --filter "label=beckon.chain" | grep "^$NS-" || true); do
+    name=${v#"$NS"-}
+    code=$(docker container inspect -f '{{.State.ExitCode}}' "$v" 2>/dev/null || echo "")
+    if running "$v"; then status=running; elif [ "$code" = 0 ]; then status="done"; elif [ -n "$code" ]; then status=stopped; else status=-; fi
+    printf '%-32s %-8s %s\n' "$name" "$status" "$(label "$name" repo)"
+  done
+}
+
+cmd=${1:-}
+[ $# -eq 0 ] || shift
+case $cmd in
+  setup)
+    images
+    cat <<'EOF'
+Opening a shell in the sandbox. Sign in once; the sign-ins are kept for every chain:
+  claude           sign in to Claude Code (open the link it prints on this computer), then /exit
+  beckon login     approve this sandbox as a host
+  beckon pair      pair your phone: compare the six words
+  exit             back to your terminal
+EOF
+    cmd_shell
+    ;;
+  chain) cmd_chain "$@" ;;
+  attach)
+    chain_vol "${1:?attach needs a chain name}"
+    running "$NS-$1" || die "$1 is not running (devbox/local logs $1)"
+    echo "Attached to $1. Detach with ctrl-p ctrl-q; ctrl-c stops the chain."
+    docker attach "$NS-$1"
+    ;;
+  logs)
+    chain_vol "${1:?logs needs a chain name}"
+    exists container "$NS-$1" || die "$1 has no container left: its stage logs are in .beckon-chain/ (devbox/local shell $1)"
+    docker logs "$NS-$1"
+    ;;
+  fetch) cmd_fetch "$@" ;;
+  shell) cmd_shell "$@" ;;
+  list) cmd_list ;;
+  rm)
+    chain_vol "${1:?rm needs a chain name}"
+    docker rm -f "$NS-$1" >/dev/null 2>&1 || true
+    docker volume rm "$NS-$1" >/dev/null
+    echo "Deleted $1 and its copy of the repository."
+    ;;
+  build)
+    echo "Building the sandbox images..."
+    build
+    docker rm -f "$PROXY" >/dev/null 2>&1 || true # restarts on the new image next time
+    echo "Done. Running chains keep their old image until they end."
+    ;;
+  reset)
+    [ -z "$(docker ps -q --filter "volume=$HOME_VOL")" ] || die "a sandbox is running: stop it first"
+    docker volume rm "$HOME_VOL" >/dev/null 2>&1 || true
+    echo "Deleted the sandbox's sign-ins. Run devbox/local setup to sign in again."
+    ;;
+  -h | --help | help) usage ;;
+  *) usage 2 >&2 ;;
+esac

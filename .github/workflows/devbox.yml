@@ -1,0 +1,62 @@
+# Checks devbox/bootstrap.sh against the agents' current releases: on changes to it, and weekly, because the
+# agents' installers change without any change here.
+name: devbox
+
+on:
+  push:
+    # Branches only: a tag push ignores paths, and would start this while the release it installs is still
+    # being built (the helper download then fails with a 404).
+    branches: ["**"]
+    paths: ["devbox/**", ".github/workflows/devbox.yml"]
+  pull_request:
+    paths: ["devbox/**", ".github/workflows/devbox.yml"]
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: devbox-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: shellcheck -S warning devbox/*.sh devbox/launch devbox/chain devbox/local devbox/agents devbox/local-image/start devbox/local-image/proxy-start
+      - name: The launcher, under bash 3.2 (macOS) and on Ubuntu
+        run: devbox/launch-test.sh
+      - name: The sessions screen, under bash 3.2 (macOS) with tmux
+        run: devbox/agents-test.sh
+      - name: The chain runner, under bash 3.2 (macOS) and on Ubuntu
+        run: devbox/chain-test.sh
+      - name: The local sandbox, its proxy and a chain in it
+        run: devbox/local-test.sh
+      - name: Bootstrap twice in a clean Ubuntu 24.04 container, then check
+        run: devbox/test.sh
+
+  vm:
+    # The runner is a real VM with systemd, so this covers the firewall, swap and services the container skips.
+    # Docker is left out: the runner image has its own. So is OpenCode: on this runner image only, its npm
+    # postinstall cannot find its own linux-x64 binary package (it installs on a fresh x86 server and in the
+    # container job above).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DEVBOX_DOCKER: "0"
+      DEVBOX_AGENTS: claude codex gemini copilot cursor
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: A login key on root, as a provider would install it
+        run: |
+          ssh-keygen -q -t ed25519 -N "" -f "$RUNNER_TEMP/devbox"
+          sudo install -d -m 700 /root/.ssh
+          sudo install -m 600 "$RUNNER_TEMP/devbox.pub" /root/.ssh/authorized_keys
+      - name: Remove the runner's own Node, so the script's is the only one, as on a fresh server
+        run: sudo rm -rf /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/lib/node_modules
+      - run: sudo -E bash devbox/bootstrap.sh
+      - run: sudo -E bash devbox/check.sh

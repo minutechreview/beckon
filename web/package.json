@@ -1,0 +1,59 @@
+{
+  "name": "beckon-web",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "build": "tsx scripts/build-sw.ts && next build && tsx scripts/build-server.ts",
+    "start": "NODE_ENV=production node dist/server.mjs",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.sw.json",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "build:sw": "tsx scripts/build-sw.ts",
+    "icons": "tsx scripts/gen-icons.ts",
+    "vapid": "web-push generate-vapid-keys",
+    "db:migrate:prod": "node dist/migrate.mjs",
+    "ui:capture": "tsx scripts/ui-capture.ts"
+  },
+  "dependencies": {
+    "@auth/drizzle-adapter": "^1.11.3",
+    "@next/env": "^16.4.0",
+    "drizzle-orm": "^0.45.4",
+    "libsodium-wrappers": "^0.8.4",
+    "next": "^16.4.0",
+    "next-auth": "^5.0.0-beta.32",
+    "nodemailer": "^10.1.0",
+    "pg": "^8.23.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "stripe": "^23.0.0",
+    "uuidv7": "^1.2.1",
+    "web-push": "^3.6.7",
+    "ws": "^8.22.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "^1.64.0",
+    "@types/node": "^26.6.4",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/web-push": "^3.6.4",
+    "@types/ws": "^8.18.2",
+    "drizzle-kit": "^0.31.11",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3"
+  },
+  "overrides": {
+    "@esbuild-kit/core-utils": {
+      "esbuild": "$esbuild"
+    },
+    "nodemailer": "$nodemailer"
+  }
+}

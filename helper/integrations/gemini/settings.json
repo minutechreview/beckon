@@ -1,0 +1,8 @@
+{
+  "hooks": {
+    "BeforeAgent": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "beckon hook --app gemini" }] }],
+    "AfterTool": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "beckon hook --app gemini" }] }],
+    "Notification": [{ "matcher": "ToolPermission", "hooks": [{ "type": "command", "command": "beckon hook --app gemini" }] }],
+    "AfterAgent": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "beckon hook --app gemini" }] }]
+  }
+}

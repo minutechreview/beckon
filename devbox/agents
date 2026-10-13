@@ -1,0 +1,704 @@
+#!/usr/bin/env bash
+# One screen for every agent session: the tmux windows on this computer and on your devbox, and the sandbox
+# chains of devbox/local. Pick a number to attach; detach (ctrl-b d, or ctrl-p ctrl-q in a sandbox) to come back.
+# New sessions start through devbox/launch, devbox/local or a tmux window here. Guide: docs/devbox.md
+#
+#   devbox/agents          the screen: list, attach, start, close
+#   devbox/agents list     print the list once
+#
+# On a terminal you can also click a session's row to attach to it (DEVBOX_AGENTS_MOUSE=0 turns that off).
+# "n" asks what to start. Each question shows its default in brackets and Enter takes it; your last choices are
+# remembered in ~/.config/beckon/agents-last (BECKON_CONFIG_DIR changes the folder).
+#
+# Environment: DEVBOX_HOST (default dev@devbox; empty for no devbox), DEVBOX_SSH (default ssh).
+# It runs nothing on the box except over your own SSH login.
+set -euo pipefail
+DIR=$(cd "$(dirname "$0")" && pwd)
+HOST="${DEVBOX_HOST-dev@devbox}"
+SSH="${DEVBOX_SSH:-ssh}"
+LOCAL="${DEVBOX_LOCAL:-$DIR/local}" # devbox/local (tests swap in a stand-in)
+LAUNCH="${DEVBOX_LAUNCH:-$DIR/launch}" # devbox/launch (likewise)
+AGENTS=(claude codex gemini copilot cursor opencode)
+die() { echo "devbox agents: $*" >&2; exit 1; }
+usage() { sed -n '/^#   devbox\/agents  /,/^# It runs/p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+# Prints one line per window of the tmux session "agents": id|state|name, the name last because it may hold any
+# character. A window is running while its shell has a child (the agent under beckon); once the agent exits, the
+# window is an idle shell. Runs in sh here and on the box.
+LIST='tmux list-windows -t agents -F "#{window_id}|#{pane_pid}|#{window_name}" 2>/dev/null |
+while IFS="|" read -r id pid name; do
+  if pgrep -P "$pid" >/dev/null 2>&1; then s=running; else s=ended; fi
+  echo "$id|$s|$name"
+done'
+
+# The sessions, gathered into parallel arrays (bash 3.2 has no others): where, id, state, name.
+where=() ids=() states=() names=() notes=()
+add() { where+=("$1") ids+=("$2") states+=("$3") names+=("$4"); }
+add_windows() {
+  local src=$1 id state name
+  while IFS='|' read -r id state name; do
+    [[ $id =~ ^@[0-9]+$ && $state =~ ^(running|ended)$ ]] || continue
+    [ "$name" != shell ] || continue
+    add "$src" "$id" "$state" "$name"
+  done
+}
+TMP=$(mktemp -d)
+# Whatever way the script ends, the terminal gets its mouse mode and settings back (see read_reply).
+trap 'tty_cooked; rm -rf "$TMP"' EXIT
+# One SSH connection for the whole screen: the first refresh connects, the rest (and attaching) reuse it.
+MUX=()
+[ ! -d ~/.ssh ] || MUX=(-o ControlMaster=auto -o "ControlPath=~/.ssh/beckon-agents-%C" -o ControlPersist=300)
+
+gather() {
+  where=() ids=() states=() names=() notes=()
+  # The devbox and Docker each take a second or two, so both are asked at once.
+  local box="" sandbox name status
+  if [ -n "$HOST" ]; then
+    "$SSH" ${MUX[@]+"${MUX[@]}"} -o ConnectTimeout=5 -o BatchMode=yes "$HOST" "echo beckon-ok; $LIST" \
+      </dev/null >"$TMP/box" 2>/dev/null &
+    box=$!
+  fi
+  # devbox/local fails fast without Docker: then there are no sandbox chains to show.
+  "$LOCAL" list </dev/null >"$TMP/sandbox" 2>/dev/null &
+  sandbox=$!
+  if command -v tmux >/dev/null; then
+    add_windows local < <(sh -c "$LIST" || true)
+  fi
+  if [ -n "$box" ]; then
+    wait "$box" || true
+    if [ "$(head -1 "$TMP/box")" = beckon-ok ]; then
+      add_windows devbox <"$TMP/box"
+    else
+      notes+=("devbox ($HOST) did not answer")
+    fi
+  fi
+  wait "$sandbox" || true
+  while read -r name status _; do
+    [ -n "$name" ] || continue
+    [ "$status" = running ] || status=ended
+    add sandbox "$name" "$status" "$name"
+  done <"$TMP/sandbox"
+}
+
+show() {
+  local i
+  if [ ${#where[@]} = 0 ]; then
+    echo '  No sessions. Type n (or say "new") to start one.'
+  else
+    printf '  %-3s %-8s %-8s %s\n' "#" where state session
+    for i in "${!where[@]}"; do
+      printf '  %-3s %-8s %-8s %s\n' "$((i + 1))" "${where[$i]}" "${states[$i]}" "${names[$i]}"
+    done
+  fi
+  for i in ${notes[@]+"${!notes[@]}"}; do echo "  (${notes[$i]})"; done
+}
+
+attach() {
+  local i=$1 id=${ids[$1]}
+  case ${where[$i]} in
+    local)
+      if [ -n "${TMUX:-}" ]; then
+        tmux select-window -t "$id" \; switch-client -t agents
+      else
+        tmux select-window -t "$id" \; attach-session -t agents
+      fi
+      ;;
+    devbox)
+      # The id was checked in add_windows: @ and digits only, so it is safe in the remote shell.
+      "$SSH" ${MUX[@]+"${MUX[@]}"} -t "$HOST" "tmux select-window -t '$id' \\; attach-session -t agents" || true
+      ;;
+    sandbox)
+      if [ "${states[$i]}" = running ]; then
+        "$LOCAL" attach "$id" || true
+      else
+        "$LOCAL" logs "$id" 2>&1 | "${PAGER:-less}" || true
+      fi
+      ;;
+  esac
+}
+
+close() {
+  local i=$1 ok
+  case ${where[$i]} in
+    sandbox) echo "A sandbox chain keeps its copy of the repository: devbox/local rm ${ids[$i]}"; return ;;
+  esac
+  if [ "${states[$i]}" = running ]; then
+    read -r -p "${names[$i]} is still running. Close it and stop the agent? [y/N] " ok || return 0
+    [[ $ok =~ ^[Yy] ]] || return 0
+  fi
+  case ${where[$i]} in
+    local) tmux kill-window -t "${ids[$i]}" ;;
+    devbox) "$SSH" ${MUX[@]+"${MUX[@]}"} "$HOST" "tmux kill-window -t '${ids[$i]}'" </dev/null ;;
+  esac
+}
+
+# spoken TEXT: a typed or dictated reply in the screen's own words. Dictation types "One.", "close two" or
+# "Queue": this lowercases it, drops punctuation, turns number words into digits and spoken command names into
+# their letters, and drops filler such as "number". Homophones count too: "to" is 2, "ex" is x, "queue" is q.
+spoken() {
+  local w out=""
+  for w in $(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' ' '); do
+    case $w in
+      one | won) w=1 ;; two | to | too) w=2 ;; three) w=3 ;; four | for) w=4 ;; five) w=5 ;; six) w=6 ;;
+      seven) w=7 ;; eight | ate) w=8 ;; nine) w=9 ;; ten) w=10 ;; eleven) w=11 ;; twelve) w=12 ;;
+      new | knew) w=n ;; ex | close) w=x ;; queue | cue | quit | exit) w=q ;;
+      x[0-9]*) w="x ${w#x}" ;;
+      enter | refresh | attach | number) continue ;;
+    esac
+    out="${out:+$out }$w"
+  done
+  printf '%s\n' "$out"
+}
+
+# What `n` remembers, one key=value per line: the last place; per place the agent, and the folder, repository,
+# prompt files and check; per agent the model and effort. It is read as data, never run.
+CONF="${BECKON_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/beckon}/agents-last"
+last() { if [ -r "$CONF" ]; then lasts "$1" | head -1; fi; }
+lasts() { if [ -r "$CONF" ]; then awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2) }' "$CONF"; fi; }
+# remember KEY VALUE...: sets each key. Failing to write is never a reason to stop starting a session.
+remember() {
+  local tmp="$CONF.$$"
+  mkdir -p "$(dirname "$CONF")" 2>/dev/null || return 0
+  while [ $# -ge 2 ]; do
+    { if [ -r "$CONF" ]; then awk -v k="$1" 'index($0, k "=") != 1' "$CONF"; fi; printf '%s=%s\n' "$1" "$2"; } \
+      >"$tmp" 2>/dev/null && mv "$tmp" "$CONF" 2>/dev/null || rm -f "$tmp"
+    shift 2
+  done
+  chmod 600 "$CONF" 2>/dev/null || true
+}
+# remember_recent KEY VALUE: VALUE first among up to five lines of KEY (the last folders used).
+remember_recent() {
+  local tmp="$CONF.$$" l
+  mkdir -p "$(dirname "$CONF")" 2>/dev/null || return 0
+  {
+    printf '%s=%s\n' "$1" "$2"
+    lasts "$1" | awk -v v="$2" '$0 != v' | head -4 | while IFS= read -r l; do printf '%s=%s\n' "$1" "$l"; done
+    if [ -r "$CONF" ]; then awk -v k="$1" 'index($0, k "=") != 1' "$CONF"; fi
+  } >"$tmp" 2>/dev/null && mv "$tmp" "$CONF" 2>/dev/null || rm -f "$tmp"
+  chmod 600 "$CONF" 2>/dev/null || true
+}
+
+# The model and effort each agent's own command line takes (checked against the agents' --help and docs; see
+# docs/devbox.md). The others, Copilot among them, are skipped. A model is any name the agent accepts, so it is
+# only checked for characters that are safe in a command line.
+MODEL_RE='^[A-Za-z0-9][]A-Za-z0-9._:/@+=,[-]*$'
+has_model() { case $1 in claude | codex | gemini | cursor | opencode | chain) return 0 ;; esac; return 1; }
+efforts() { case $1 in claude) echo "low medium high xhigh max" ;; codex) echo "low medium high xhigh" ;; esac; }
+
+# in_list VALUE ITEM...: succeeds if VALUE is one of the items.
+in_list() {
+  local v=$1 i
+  shift
+  for i in "$@"; do
+    if [ "$i" = "$v" ]; then return 0; fi
+  done
+  return 1
+}
+
+# pick PROMPT DEFAULT OPTION...: a numbered menu; prints the choice. An empty reply (or "enter") takes DEFAULT, a
+# spoken number or an option's name ("two", "codex", "this computer") takes that option. If PICK_FREE is set, any
+# other reply matching it is taken as typed. Fails at the end of input.
+pick() {
+  local prompt=$1 def=$2 reply raw i opt lo line=""
+  shift 2
+  i=0
+  for opt in "$@"; do
+    i=$((i + 1))
+    line="$line  $i $opt"
+  done
+  echo "$line" >&2
+  while :; do
+    read -r -p "$prompt [$def]: " raw || return 1
+    reply=$(spoken "$raw")
+    if [ -z "$reply" ]; then printf '%s\n' "$def"; return 0; fi
+    if [[ $reply =~ ^[0-9]+$ ]]; then
+      if [ "$reply" -ge 1 ] && [ "$reply" -le $# ]; then printf '%s\n' "${!reply}"; return 0; fi
+      echo "Not a choice: $reply" >&2
+      continue
+    fi
+    for opt in "$@"; do
+      lo=$(printf '%s' "$opt" | tr '[:upper:]' '[:lower:]')
+      if [ "$reply" = "$lo" ] || [ "$reply" = "${lo%% *}" ]; then printf '%s\n' "$opt"; return 0; fi
+    done
+    raw=$(printf '%s' "$raw" | sed 's/^ *//; s/ *$//')
+    if [ -n "${PICK_FREE:-}" ] && [[ $raw =~ $PICK_FREE ]]; then printf '%s\n' "$raw"; return 0; fi
+    echo "Not a choice: $raw" >&2
+  done
+}
+
+# ask PROMPT DEFAULT: a typed answer. An empty reply or "enter" takes DEFAULT; "none" is empty.
+ask() {
+  local raw t
+  read -r -p "$1${2:+ [$2]}: " raw || return 1
+  t=$(printf '%s' "$raw" | tr -cd 'A-Za-z' | tr '[:upper:]' '[:lower:]')
+  if [ -z "$raw" ] || [ "$t" = enter ]; then
+    printf '%s\n' "$2"
+  elif [ "$t" = none ]; then
+    echo
+  else
+    printf '%s\n' "$raw" | sed 's/^ *//; s/ *$//'
+  fi
+}
+
+# model_flags AGENT MODEL EFFORT: sets the array mf to the agent's own options for them. Empty or "default" gives
+# no option, so the agent keeps its default.
+model_flags() {
+  mf=()
+  if [ -n "$2" ] && [ "$2" != default ]; then
+    case $1 in claude | codex | gemini | cursor | opencode) mf+=(--model "$2") ;; esac
+  fi
+  if [ -n "$3" ] && [ "$3" != default ]; then
+    case $1 in
+      claude) mf+=(--effort "$3") ;;
+      codex) mf+=(-c "model_reasoning_effort=\"$3\"") ;;
+    esac
+  fi
+}
+
+# start_local AGENT FOLDER PROMPT [MODEL [EFFORT]]: the agent under beckon in a new window of this computer's tmux
+# session "agents".
+start_local() {
+  local agent=$1 folder=$2 prompt=$3 model=${4:-} effort=${5:-} flag="" cmd win
+  local -a mf
+  command -v tmux >/dev/null || die "tmux is not installed (macOS: brew install tmux)"
+  command -v beckon >/dev/null || die "beckon is not installed (docs/install.md)"
+  [ -d "$folder" ] || die "no such folder: $folder"
+  [ -z "$model" ] || [ "$model" = default ] || [[ $model =~ $MODEL_RE ]] || die "not a model name: $model"
+  folder=$(cd "$folder" && pwd)
+  win="$agent/$(basename "$folder")-$(date +%m%d-%H%M%S)"
+  # The same command lines as devbox/launch-remote.sh.
+  local -a run=(beckon run)
+  # The window's name names the session in Beckon too, so the app and this screen agree (an older helper has no
+  # --name: it shows folder and branch instead).
+  if beckon help 2>/dev/null | grep -q -- '--name LABEL'; then
+    run+=(--name "$win")
+  fi
+  case $agent in
+    claude) run+=(--no-query-reply -- claude) ;;
+    codex) run+=(-- codex) ;;
+    gemini) run+=(-- gemini) flag=-i ;;
+    copilot) run+=(-- copilot) flag=-i ;;
+    cursor) run+=(-- cursor-agent) ;;
+    opencode) run+=(-- opencode) flag=--prompt ;;
+    *) die "unknown agent: $agent" ;;
+  esac
+  model_flags "$agent" "$model" "$effort"
+  run+=(${mf[@]+"${mf[@]}"})
+  if [ -n "$prompt" ]; then
+    [ -z "$flag" ] || run+=("$flag")
+    run+=("$prompt")
+  fi
+  cmd=$(printf '%q ' "${run[@]}")
+  tmux has-session -t agents 2>/dev/null || tmux new-session -d -s agents -n shell -c "$HOME"
+  # Several arguments: tmux runs bash directly, so the user's own shell never parses the command line.
+  tmux new-window -d -t agents: -n "$win" -c "$folder" bash -c "$cmd; exec \"\${SHELL:-bash}\" -l"
+  echo "Started $agent in $folder, tmux window agents:$win"
+}
+
+place_key() { case $1 in "this computer") echo computer ;; *) echo "$1" ;; esac; }
+# shellcheck disable=SC2088 # the tilde is matched as typed, not expanded
+tilde() { case $1 in "~") echo "$HOME" ;; "~/"*) echo "$HOME/${1#\~/}" ;; *) echo "$1" ;; esac; }
+
+# ask_folder KEY LABEL: the folders used last time and this one, the last first; a folder typed in is taken as it is.
+ask_folder() {
+  local key=$1 label=$2 d f
+  local -a opts=()
+  while IFS= read -r d; do
+    if [ -d "$d" ] && ! in_list "$d" ${opts[@]+"${opts[@]}"}; then opts+=("$d"); fi
+  done < <(lasts "$key")
+  if ! in_list "$PWD" ${opts[@]+"${opts[@]}"}; then opts+=("$PWD"); fi
+  f=$(PICK_FREE='.' pick "$label" "${opts[0]}" "${opts[@]}") || return 1
+  tilde "$f"
+}
+
+# ask_agent PLACEKEY AGENT...: the agent, last time's as the default.
+ask_agent() {
+  local key=$1 def
+  shift
+  def=$(last "agent.$key")
+  if [ "$def" = chain ]; then def="chain (Claude Code)"; fi
+  if ! in_list "$def" "$@"; then def=$1; fi
+  pick Agent "$def" "$@"
+}
+
+# ask_repo: the repositories already cloned on the devbox (asked over SSH), or one typed in.
+ask_repo() {
+  local def line
+  local -a known=()
+  while IFS= read -r line; do
+    if [ -n "$line" ]; then known+=("$line"); fi
+  done < <("$LAUNCH" --repos 2>/dev/null || true)
+  def=$(last repo)
+  if [ ${#known[@]} = 0 ]; then
+    ask "Repository (owner/name or git URL)" "$def"
+    return
+  fi
+  if ! in_list "$def" "${known[@]}"; then def=${known[0]}; fi
+  PICK_FREE='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$|^(https://|ssh://|file://|git@)[A-Za-z0-9@:/._~-]+$' \
+    pick Repository "$def" "${known[@]}"
+}
+
+# ask_model AGENT: a model name, or "default" for the agent's own. Claude Code (and chains) get a menu of aliases.
+ask_model() {
+  local agent=$1 def m
+  def=$(last "model.$agent")
+  [[ $def =~ $MODEL_RE ]] || def=default
+  if [ "$agent" = claude ] || [ "$agent" = chain ]; then
+    PICK_FREE=$MODEL_RE pick "Model (or type a name)" "$def" default opus sonnet haiku fable
+    return
+  fi
+  m=$(ask "Model (a name, or default for the agent's own)" "$def") || return 1
+  if [ -z "$m" ] || [ "$(spoken "$m")" = default ]; then m=default; fi
+  if [ "$m" != default ] && ! [[ $m =~ $MODEL_RE ]]; then
+    echo "Not a model name: $m (using the default)" >&2
+    m=default
+  fi
+  echo "$m"
+}
+
+# ask_effort AGENT: one of its levels, or "default".
+ask_effort() {
+  local def level
+  local -a levels=(default)
+  for level in $(efforts "$1"); do levels+=("$level"); done
+  def=$(last "effort.$1")
+  if ! in_list "$def" "${levels[@]}"; then def=default; fi
+  pick Effort "$def" "${levels[@]}"
+}
+
+# recall: sets the variables of new from what was remembered; fails unless they are all still good.
+recall() {
+  local w
+  w=$(last place)
+  in_list "$w" "${places[@]}" || return 1
+  place=$w
+  pkey=$(place_key "$place")
+  if [ "$place" = sandbox ]; then agent=chain; else agent=$(last "agent.$pkey"); fi
+  case $place in
+    "this computer")
+      in_list "$agent" "${AGENTS[@]}" || return 1
+      folder=$(last "folder.$pkey")
+      [ -d "$folder" ] || return 1
+      ;;
+    devbox)
+      in_list "$agent" "${AGENTS[@]}" chain || return 1
+      repo=$(last repo)
+      [ -n "$repo" ] || return 1
+      ;;
+    sandbox)
+      folder=$(last "folder.$pkey")
+      [ -d "$folder" ] || return 1
+      ;;
+  esac
+  if [ "$agent" = chain ]; then
+    glob=$(last "glob.$pkey")
+    [ -n "$glob" ] || return 1
+    check=$(last "check.$pkey")
+  fi
+  model=$(last "model.$agent")
+  [[ $model =~ $MODEL_RE ]] || model=default
+  effort=$(last "effort.$agent")
+  # shellcheck disable=SC2046 # the levels are plain words
+  if [ -z "$(efforts "$agent")" ] || ! in_list "$effort" $(efforts "$agent"); then effort=default; fi
+}
+
+# summary: one line for the choices in new's variables.
+summary() {
+  local s="$agent"
+  case $place in
+    "this computer") s="$s on this computer, in $folder" ;;
+    devbox) s="$s on the devbox, repository $repo" ;;
+    sandbox) s="$s in a sandbox, in $folder" ;;
+  esac
+  if [ -n "$glob" ]; then s="$s, files $glob"; fi
+  if [ -n "$check" ]; then s="$s, check $check"; fi
+  if has_model "$agent" && [ "$model" != default ]; then s="$s, model $model"; fi
+  if [ -n "$(efforts "$agent")" ] && [ "$effort" != default ]; then s="$s, effort $effort"; fi
+  echo "$s"
+}
+
+# new: starts a session. Every question shows its default in brackets and an empty reply (or "enter") takes it:
+# the last choice, or the first. With a last time to repeat, one question ("Same again?") skips the rest but the
+# prompt. All of it can be answered by voice.
+new() {
+  local place="" pkey agent="" folder="" repo="" glob="" check="" model="" effort="" prompt="" again="" c
+  local -a places
+  places=("this computer" devbox sandbox)
+  [ -n "$HOST" ] || places=("this computer" sandbox)
+
+  if recall; then
+    echo "Last time: $(summary)"
+    read -r -p "Same again? [yes]: " again || return 0
+    again=$(spoken "$again")
+    case $again in "" | yes | yeah | yep | ok | okay | sure | same | y) again=yes ;; *) again="" ;; esac
+  fi
+  if [ "$again" != yes ]; then
+    folder="" repo="" glob="" check="" model="" effort=""
+    place=$(pick Where "${place:-this computer}" "${places[@]}") || return 0
+    pkey=$(place_key "$place")
+    case $place in
+      "this computer")
+        agent=$(ask_agent "$pkey" "${AGENTS[@]}") || return 0
+        folder=$(ask_folder "folder.$pkey" Folder) || return 0
+        ;;
+      devbox)
+        agent=$(ask_agent "$pkey" "${AGENTS[@]}" "chain (Claude Code)") || return 0
+        if [ "$agent" = "chain (Claude Code)" ]; then agent=chain; fi
+        repo=$(ask_repo) || return 0
+        ;;
+      *)
+        agent=chain
+        folder=$(ask_folder "folder.$pkey" "Repository folder") || return 0
+        ;;
+    esac
+    if [ "$agent" = chain ]; then
+      glob=$(ask "Prompt files (for example docs/prompts/*.md)" "$(last "glob.$pkey")") || return 0
+      check=$(ask "Check command (none for no check)" "$(last "check.$pkey")") || return 0
+    fi
+    if has_model "$agent"; then
+      model=$(ask_model "$agent") || return 0
+      if [ -n "$(efforts "$agent")" ]; then effort=$(ask_effort "$agent") || return 0; fi
+    fi
+  fi
+  if [ "$agent" = chain ]; then
+    [ -n "$glob" ] || { echo "No prompt files given." >&2; return 0; }
+  else
+    read -r -p "Prompt (empty for none): " prompt || prompt=""
+  fi
+  if [ "$model" = default ]; then model=""; fi
+  if [ "$effort" = default ]; then effort=""; fi
+
+  case $place in
+    "this computer")
+      start_local "$agent" "$folder" "$prompt" "$model" "$effort"
+      ;;
+    devbox)
+      [ -n "$HOST" ] || die "DEVBOX_HOST is empty"
+      local -a la=(-r "$repo")
+      [ -z "$model" ] || la+=(--model "$model")
+      [ -z "$effort" ] || la+=(--effort "$effort")
+      if [ "$agent" = chain ]; then
+        la+=(--chain "$glob")
+        [ -z "$check" ] || la+=(--check "$check")
+        "$LAUNCH" "${la[@]}" || return 0
+      else
+        "$LAUNCH" -a "$agent" "${la[@]}" -- "$prompt" || return 0
+      fi
+      ;;
+    *)
+      local -a lo=("$glob")
+      [ -z "$check" ] || lo+=(--check "$check")
+      [ -z "$model" ] || lo+=(--model "$model")
+      (cd "$folder" && "$LOCAL" chain "${lo[@]}") || return 0
+      ;;
+  esac
+  # It started: remember the choices. The prompt is never kept.
+  c=(place "$place" "agent.$pkey" "$agent")
+  if [ "$agent" = chain ]; then c+=("glob.$pkey" "$glob" "check.$pkey" "$check"); fi
+  if [ -n "$repo" ]; then c+=(repo "$repo"); fi
+  c+=("model.$agent" "${model:-default}")
+  if [ -n "$(efforts "$agent")" ]; then c+=("effort.$agent" "${effort:-default}"); fi
+  remember "${c[@]}"
+  if [ -n "$folder" ]; then remember_recent "folder.$pkey" "$folder"; fi
+}
+
+# Clicking a session. While the screen waits for a reply it asks the terminal to report mouse clicks (xterm
+# modes 1000 and 1006), reads the reply a key at a time, and maps a click on a session's row to that session.
+# Typed and dictated text still arrives as ordinary keys. Mouse mode is on only inside read_reply: it is off
+# before anything is attached, started or closed, and again on exit, Ctrl-C and kill.
+MOUSE=0 MOUSE_ON=0 TTY_SAVED=""
+DRAW_ROWS=0 DRAW_COLS=0 SCREEN=""
+FIRST_LINE=3 # the line of frame's output (from 0) that holds session 1: the title, a blank line, the header
+
+tty_cooked() { # the terminal as it was: mouse reporting off, settings restored
+  if [ "$MOUSE_ON" = 1 ]; then
+    printf '\e[?1006l\e[?1000l'
+    MOUSE_ON=0
+  fi
+  if [ -n "$TTY_SAVED" ]; then
+    stty "$TTY_SAVED" 2>/dev/null || true
+    TTY_SAVED=""
+    trap - INT TERM HUP
+  fi
+}
+
+tty_raw() { # no echo, no line buffering, mouse reporting on; undone by tty_cooked on any way out
+  TTY_SAVED=$(stty -g)
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+  stty -echo -icanon
+  printf '\e[?1000h\e[?1006h'
+  MOUSE_ON=1
+}
+
+term_size() { # sets TERM_ROWS and TERM_COLS
+  local sz
+  sz=$(stty size 2>/dev/null) || sz=""
+  TERM_ROWS=${sz% *} TERM_COLS=${sz#* }
+  [[ $TERM_ROWS =~ ^[0-9]+$ && $TERM_COLS =~ ^[0-9]+$ && $TERM_COLS -gt 0 ]] || { TERM_ROWS=24 TERM_COLS=80; }
+}
+
+ord() { printf '%d' "'$1"; }
+
+# read_esc: reads what follows an ESC byte and sets SEQ_KIND to press (a left click, with SEQ_ROW the screen row
+# from 1), release (a mouse button let go) or other (arrow keys and the rest, read and dropped). The terminal
+# sends a click as ESC [ < button ; column ; row M, or in the older encoding as ESC [ M and three bytes. A lone
+# ESC key waits a second for the rest, then counts as other.
+read_esc() {
+  local c p="" b
+  SEQ_KIND=other SEQ_ROW=""
+  IFS= read -rsn1 -t 1 c || return 0
+  case $c in
+    '[') ;;
+    O) IFS= read -rsn1 -t 1 c || true; return 0 ;;
+    *) return 0 ;;
+  esac
+  c=""
+  while IFS= read -rsn1 -t 1 c; do
+    case $c in
+      [0-9\;\<\=\>\?:]) p="$p$c" ;; # parameters; anything else ends the sequence
+      *) break ;;
+    esac
+  done || return 0
+  case "$p$c" in
+    '<'[0-9]*';'[0-9]*';'[0-9]*M)
+      b=${p#<}
+      if [ "${b%%;*}" = 0 ]; then SEQ_KIND=press SEQ_ROW=${p##*;}; fi
+      ;;
+    '<'*m) SEQ_KIND=release ;;
+    M) # older encoding: button, column and row, each plus 32
+      IFS= read -rsn1 -t 1 b || return 0
+      IFS= read -rsn1 -t 1 c || return 0
+      IFS= read -rsn1 -t 1 c || return 0
+      case $(($(ord "$b") - 32)) in
+        0) SEQ_KIND=press SEQ_ROW=$(($(ord "$c") - 32)) ;;
+        3) SEQ_KIND=release ;;
+      esac
+      ;;
+  esac
+}
+
+# session_at ROW COLS HEIGHT: the number (from 0) of the session listed on screen row ROW, if any. SCREEN is the
+# text last drawn; the prompt line follows it. The cursor sits on the prompt, so a screen taller than the
+# terminal has scrolled by the excess, and a line wider than the terminal takes more than one row.
+session_at() {
+  local row=$1 cols=$2 height=$3 line w total=0 i off=0 s e
+  local -a starts=()
+  while IFS= read -r line; do
+    starts+=("$((total + 1))")
+    w=$(((${#line} + cols - 1) / cols))
+    [ "$w" -ge 1 ] || w=1
+    total=$((total + w))
+  done <<<"$SCREEN"
+  starts+=("$((total + 1))")
+  total=$((total + 1))
+  [ "$total" -le "$height" ] || off=$((total - height))
+  for ((i = 0; i < ${#where[@]}; i++)); do
+    s=${starts[$((FIRST_LINE + i))]:-0} e=${starts[$((FIRST_LINE + i + 1))]:-0}
+    if [ "$row" -ge $((s - off)) ] && [ "$row" -lt $((e - off)) ]; then
+      echo "$i"
+      return 0
+    fi
+  done
+}
+
+# read_reply: prints the prompt and reads one reply a key at a time. It sets REPLY_TEXT to what was typed (or
+# dictated, which arrives the same way) and CLICK to the session number (from 0) if a session was clicked. It
+# does its own editing: backspace, ctrl-u, enter; ctrl-d on an empty line is end of input (status 1).
+read_reply() {
+  local c buf="" i hit status=0
+  REPLY_TEXT="" CLICK=""
+  printf '> '
+  tty_raw
+  while :; do
+    IFS= read -rsn1 c || { status=1; break; }
+    case $c in
+      "" | $'\r') printf '\n'; break ;;
+      $'\x7f' | $'\b') if [ -n "$buf" ]; then buf=${buf%?}; printf '\b \b'; fi ;;
+      $'\x15') for ((i = ${#buf}; i > 0; i--)); do printf '\b \b'; done; buf="" ;;
+      $'\x04') if [ -z "$buf" ]; then printf '\n'; status=1; break; fi ;;
+      $'\e')
+        read_esc
+        [ "$SEQ_KIND" = press ] || continue
+        term_size
+        # A resized terminal has moved the rows: ignore the click.
+        [ "$TERM_ROWS $TERM_COLS" = "$DRAW_ROWS $DRAW_COLS" ] || continue
+        hit=$(session_at "$SEQ_ROW" "$TERM_COLS" "$TERM_ROWS")
+        [ -n "$hit" ] || continue
+        CLICK=$hit
+        # Wait for the button to come up, so its release is not left to be typed into what is attached next.
+        for _ in 1 2 3; do
+          if IFS= read -rsn1 -t 1 c && [ "$c" = $'\e' ]; then
+            read_esc
+            [ "$SEQ_KIND" != release ] || break
+          fi
+        done
+        break
+        ;;
+      [[:cntrl:]]) ;;
+      *) buf="$buf$c"; printf '%s' "$c" ;;
+    esac
+  done
+  tty_cooked
+  REPLY_TEXT=$buf
+  return "$status"
+}
+
+frame() { # what the screen shows above the prompt
+  echo "Beckon agents"
+  echo
+  show
+  echo
+  echo "  number: attach (detach with ctrl-b d to come back)   n: new   x number: close   enter: refresh   q: quit"
+  if [ "$MOUSE" = 1 ]; then
+    echo '  or say it: "one" to attach, "new", "close two", "refresh", "quit"   or click a session'
+  else
+    echo '  or say it: "one" to attach, "new", "close two", "refresh", "quit"'
+  fi
+}
+
+screen() {
+  local in n click
+  if [ -t 0 ] && [ -t 1 ] && [ "${TERM:-dumb}" != dumb ] && [ "${DEVBOX_AGENTS_MOUSE-1}" != 0 ]; then MOUSE=1; fi
+  while :; do
+    gather
+    SCREEN=$(frame)
+    [ ! -t 1 ] || clear
+    printf '%s\n' "$SCREEN"
+    click=""
+    if [ "$MOUSE" = 1 ]; then
+      term_size
+      DRAW_ROWS=$TERM_ROWS DRAW_COLS=$TERM_COLS
+      read_reply || exit 0
+      in=$REPLY_TEXT click=$CLICK
+    else
+      read -r -p "> " in || exit 0
+    fi
+    if [ -n "$click" ]; then
+      attach "$click"
+      continue
+    fi
+    in=$(spoken "$in")
+    case $in in
+      q | quit) exit 0 ;;
+      n | new) new ;;
+      x\ *)
+        n=${in#x }
+        if [[ $n =~ ^[0-9]+$ ]] && [ "$n" -ge 1 ] && [ "$n" -le ${#where[@]} ]; then close $((n - 1)); fi
+        ;;
+      *)
+        if [[ $in =~ ^[0-9]+$ ]] && [ "$in" -ge 1 ] && [ "$in" -le ${#where[@]} ]; then attach $((in - 1)); fi
+        ;;
+    esac
+    # Leave messages from new and close on screen until the next keypress.
+    case $in in n | new | x\ *) [ ! -t 0 ] || read -r -p "Press enter to go back. " _ || true ;; esac
+  done
+}
+
+case ${1:-} in
+  "") screen ;;
+  list) gather; show ;;
+  -h | --help | help) usage ;;
+  *) usage 2 >&2 ;;
+esac

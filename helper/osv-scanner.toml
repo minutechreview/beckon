@@ -1,0 +1,7 @@
+# OSV-Scanner (which OpenSSF Scorecard runs) reports advisories per module; govulncheck checks what is reachable.
+# Every entry needs a reason and an expiry, so it is looked at again.
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+ignoreUntil = 2027-04-11
+reason = "golang.org/x/crypto/openpgp is unmaintained, and there is no fixed version. The helper never imports it (only nacl/box, curve25519 and chacha20poly1305 from x/crypto); govulncheck finds no reachable call."

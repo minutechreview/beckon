@@ -1,0 +1,114 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  helper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: helper/go.mod
+          cache-dependency-path: helper/go.sum
+      - run: go -C helper vet ./...
+      - run: go -C helper test -race ./...
+      - name: Fuzz the OSC 7501 parser briefly (a failure leaves its input in helper/internal/osc7501/testdata/fuzz)
+        run: go -C helper test ./internal/osc7501 -run '^$' -fuzz=FuzzFeed -fuzztime=30s
+      - name: Static builds for every release target
+        run: |
+          for t in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
+            CGO_ENABLED=0 GOOS=${t%/*} GOARCH=${t#*/} go -C helper build -trimpath -o /dev/null ./cmd/beckon
+          done
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: beckon
+          POSTGRES_PASSWORD: beckon
+          POSTGRES_DB: beckon
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U beckon" --health-interval 2s --health-timeout 3s --health-retries 20
+    defaults:
+      run:
+        working-directory: web
+    env:
+      DATABASE_URL: postgres://beckon:beckon@localhost:5432/beckon
+      TEST_ADMIN_DATABASE_URL: postgres://beckon:beckon@localhost:5432/postgres
+      TEST_DATABASE_URL: postgres://beckon:beckon@localhost:5432/beckon_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: helper/go.mod
+          cache-dependency-path: helper/go.sum
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Postgres client (the encryption e2e test dumps the database)
+        # pg_dump must be at least the server's major version (17), which Ubuntu's own package is not.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-common shellcheck dash
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y --no-install-recommends postgresql-client-17
+          # The runner image ships an older pg_dump earlier on PATH; make version 17 win.
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+        working-directory: .
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Unit and integration tests (Postgres service container)
+        run: npm test
+      - name: shellcheck install.sh
+        run: shellcheck -s sh -S warning install/install.sh
+      - name: Production build (Next, service worker, compiled server)
+        run: npm run build
+        env:
+          NODE_ENV: production
+      - run: npx playwright install --with-deps chromium
+      - name: Playwright
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: playwright-traces
+          path: web/test-results
+          retention-days: 7
+
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the production image (not pushed)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          load: true
+          tags: beckon:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: The image starts, refuses unsafe settings, and runs as a non-root user
+        run: |
+          test "$(docker run --rm --entrypoint id beckon:ci -u)" != 0
+          ! docker run --rm -e NODE_ENV=production -e AUTH_SECRET=x -e AUTH_URL=https://example.test -e BECKON_PLAINTEXT_DEV=1 beckon:ci

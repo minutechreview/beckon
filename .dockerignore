@@ -1,0 +1,14 @@
+.git
+.github
+**/node_modules
+**/.next
+**/dist
+web/test-results
+web/playwright-report
+web/public/sw.js
+helper
+docs
+prompts
+*.md
+**/.env
+**/.env.*

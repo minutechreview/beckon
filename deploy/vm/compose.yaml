@@ -1,0 +1,122 @@
+# Beckon on one VM (Hetzner, Oracle, any Linux box with Docker): app + Postgres + Caddy (HTTPS).
+# Deployed as a release under /opt/beckon/releases/<sha> by autodeploy.sh or ship.sh, then deploy.sh, with .env linked from /opt/beckon/shared.
+# See "Single VM" in docs/deploy.md.
+# Images are pinned by version and digest; Dependabot proposes updates (.github/dependabot.yml), shipped like any commit.
+name: beckon
+
+# Every container: no privilege gain through setuid binaries, no Linux capabilities beyond the ones listed.
+x-hardened: &hardened
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+
+services:
+  db:
+    <<: *hardened
+    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    restart: unless-stopped
+    # The entrypoint starts as root, fixes ownership, then drops to the postgres user.
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    read_only: true
+    tmpfs: [/var/run/postgresql, /tmp]
+    environment:
+      # The owner and superuser: migrations and backups use it. The app connects as beckon_app (deploy.sh).
+      POSTGRES_USER: beckon
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: beckon
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Not published, and only on the internal network: the app and migrate reach it. LISTEN/NOTIFY needs a direct
+    # connection, which this is.
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U beckon -d beckon"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    shm_size: 128mb
+    mem_limit: 768m
+
+  migrate:
+    <<: *hardened
+    build: { context: ../.., dockerfile: Dockerfile }
+    # One image per release commit, so a rollback reuses the old image instead of rebuilding.
+    image: beckon:${BECKON_TAG:-local}
+    command: ["node", "dist/migrate.mjs"]
+    restart: "no"
+    read_only: true
+    # Only the database URL (as the owner): no other secret from .env.
+    environment:
+      DATABASE_URL: postgres://beckon:${POSTGRES_PASSWORD}@db:5432/beckon
+    networks: [backend]
+    depends_on:
+      db: { condition: service_healthy }
+    mem_limit: 512m
+
+  app:
+    <<: *hardened
+    image: beckon:${BECKON_TAG:-local}
+    restart: unless-stopped
+    # A real init reaps children and forwards SIGTERM; the grace period outlasts the app's 12 s drain.
+    init: true
+    stop_grace_period: 20s
+    read_only: true
+    tmpfs: [/tmp, /app/.next/cache]
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # Reported by /healthz: the deploy workflow waits for it to match the commit that passed CI.
+      BECKON_REVISION: ${BECKON_TAG:-}
+      # Not the owner: beckon_app may read and write rows, nothing else (deploy.sh keeps its grants).
+      DATABASE_URL: postgres://beckon_app:${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}@db:5432/beckon
+      # env_file passes every key: blank the ones the app must not hold.
+      POSTGRES_PASSWORD: ""
+      APP_DB_PASSWORD: ""
+      BACKUP_RCLONE_REMOTE: ""
+      BACKUP_AGE_RECIPIENT: ""
+      BACKUP_PING_URL: ""
+      AUTH_URL: https://${BECKON_HOST}
+      BECKON_PUBLIC_URL: https://${BECKON_HOST}
+      # Caddy (no trusted_proxies) replaces X-Forwarded-For with the address it saw, so the right-most entry is the client.
+      CLIENT_IP_HEADER: x-forwarded-for
+      CLIENT_IP_HOPS: "1"
+    # frontend: Caddy, and outbound traffic (Stripe, the SMTP or Resend email provider, push services). backend: the database.
+    networks: [frontend, backend]
+    depends_on:
+      db: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    mem_limit: 1536m
+
+  caddy:
+    <<: *hardened
+    image: caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+    restart: unless-stopped
+    cap_add: [NET_BIND_SERVICE]
+    read_only: true
+    tmpfs: [/tmp]
+    ports: ["80:80", "443:443"]
+    environment:
+      BECKON_HOST: ${BECKON_HOST:?set BECKON_HOST in .env}
+    volumes:
+      # A fixed path, not this release's: Caddy keeps running across deploys (and keeps its connections), and
+      # deploy.sh reloads it when the Caddyfile changes.
+      - /opt/beckon/caddy:/etc/caddy:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [frontend]
+    depends_on: [app]
+    mem_limit: 256m
+
+networks:
+  # IPv6 here: published ports are then NATed over IPv6 too, so Caddy sees the real client address. Without it
+  # Docker's userland proxy relays IPv6 connections and every IPv6 client appears as the bridge address.
+  frontend:
+    enable_ipv6: true
+  # No route out: the database cannot reach the internet, and Caddy cannot reach the database.
+  backend:
+    internal: true
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
